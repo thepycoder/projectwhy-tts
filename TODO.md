@@ -8,5 +8,5 @@
 - [ ] Page number navigation
 - [ ] Jump back and forward in yolo blocks from GUI
 - [ ] Custom dictionary / substitutions
-- [ ] Skipping UI for specific yolo block types (need mayor settings plan)
+- [ ] Skipping UI for specific layout block types (need mayor settings plan)
 - [ ] Add custom API options for TTS (OpenAI, Mistral)
