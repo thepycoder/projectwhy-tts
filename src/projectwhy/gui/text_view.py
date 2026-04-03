@@ -31,7 +31,29 @@ class TextDocView(QTextBrowser):
         cur.setCharFormat(QTextCharFormat())
         cur.clearSelection()
 
-        if block is None or word_index is None or word_index >= len(block.words):
+        if block is None:
+            return
+
+        from_pos = 0
+        block_start = -1
+        for b in self._blocks:
+            if b is block:
+                block_start = from_pos
+                break
+            from_pos += len(b.text) + 2
+
+        if block_start < 0:
+            return
+
+        hcur = QTextCursor(self.document())
+
+        if word_index is None:
+            hcur.setPosition(block_start)
+            hcur.setPosition(block_start + len(block.text), QTextCursor.MoveMode.KeepAnchor)
+            hcur.mergeCharFormat(self._fmt)
+            return
+
+        if word_index >= len(block.words):
             return
 
         word = block.words[word_index]
@@ -39,18 +61,8 @@ class TextDocView(QTextBrowser):
         if not needle:
             return
 
-        hcur = QTextCursor(self.document())
-        from_pos = 0
-        found_at = -1
-        for b in self._blocks:
-            if b is block:
-                offset_in_block = sum(len(b.words[j].text) + 1 for j in range(word_index))
-                found_at = from_pos + offset_in_block
-                break
-            from_pos += len(b.text) + 2
-
-        if found_at < 0:
-            return
+        offset_in_block = sum(len(block.words[j].text) + 1 for j in range(word_index))
+        found_at = block_start + offset_in_block
 
         hcur.setPosition(found_at)
         hcur.setPosition(found_at + len(needle), QTextCursor.MoveMode.KeepAnchor)

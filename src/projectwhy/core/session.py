@@ -176,6 +176,48 @@ class ReadingSession:
     def prev_page(self) -> Page:
         return self.go_to_page(max(self.page_index - 1, 0))
 
+    def get_cursor_block(self) -> Block | None:
+        page = self.current_page()
+        if not page.blocks:
+            return None
+        idx = max(0, min(self.block_index, len(page.blocks) - 1))
+        return page.blocks[idx]
+
+    def next_block(self) -> None:
+        page = self._ensure_page(self.page_index)
+        if self.block_index + 1 < len(page.blocks):
+            self.block_index += 1
+            return
+        if self.page_index + 1 < len(self.document.pages):
+            self.page_index += 1
+            self.block_index = 0
+            if self.document.doc_type == "pdf" and self.pdf is not None:
+                ensure_pdf_neighbor_pages_loaded(
+                    self.document,
+                    self.page_index,
+                    self.pdf,
+                    self.layout_model,
+                    self.pdf_scale,
+                )
+
+    def prev_block(self) -> None:
+        if self.block_index > 0:
+            self.block_index -= 1
+            return
+        if self.page_index <= 0:
+            return
+        self.page_index -= 1
+        prev = self._ensure_page(self.page_index)
+        self.block_index = max(0, len(prev.blocks) - 1)
+        if self.document.doc_type == "pdf" and self.pdf is not None:
+            ensure_pdf_neighbor_pages_loaded(
+                self.document,
+                self.page_index,
+                self.pdf,
+                self.layout_model,
+                self.pdf_scale,
+            )
+
     @staticmethod
     def _should_speak(block: Block) -> bool:
         cfg = BLOCK_CONFIG.get(
@@ -359,11 +401,13 @@ class ReadingSession:
 
     def get_active_word_bbox(self) -> BBox | None:
         st = self.get_state()
-        block = self._current_block
-        if block is None or st.word_index is None:
-            return block.bbox if block else None
-        idx = st.word_index
-        if not block.words:
+        if st.is_playing:
+            block = self._current_block
+            if block is None:
+                return None
+            if st.word_index is not None and block.words:
+                idx = max(0, min(st.word_index, len(block.words) - 1))
+                return block.words[idx].bbox
             return block.bbox
-        idx = max(0, min(idx, len(block.words) - 1))
-        return block.words[idx].bbox
+        cursor = self.get_cursor_block()
+        return cursor.bbox if cursor else None

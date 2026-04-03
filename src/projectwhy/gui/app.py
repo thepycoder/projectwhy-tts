@@ -56,6 +56,9 @@ class MainWindow(QMainWindow):
         self._controls.stop_clicked.connect(self._on_stop)
         self._controls.prev_page_clicked.connect(self._on_prev)
         self._controls.next_page_clicked.connect(self._on_next)
+        self._controls.page_jump_requested.connect(self._on_page_jump)
+        self._controls.prev_block_clicked.connect(self._on_prev_block)
+        self._controls.next_block_clicked.connect(self._on_next_block)
         self._controls.voice_changed.connect(self._on_voice)
         self._controls.speed_changed.connect(self._on_speed)
 
@@ -178,6 +181,30 @@ class MainWindow(QMainWindow):
         self.session.next_page()
         self._refresh_page_view()
 
+    def _on_page_jump(self, page_index: int) -> None:
+        if not self.session:
+            return
+        doc = self.session.document
+        if page_index < 0 or page_index >= len(doc.pages):
+            return
+        self.session.pause()
+        self.session.go_to_page(page_index)
+        self._refresh_page_view()
+
+    def _on_prev_block(self) -> None:
+        if not self.session:
+            return
+        self.session.pause()
+        self.session.prev_block()
+        self._refresh_page_view()
+
+    def _on_next_block(self) -> None:
+        if not self.session:
+            return
+        self.session.pause()
+        self.session.next_block()
+        self._refresh_page_view()
+
     def _on_voice(self, v: str) -> None:
         if self.session:
             self.session.set_voice(v)
@@ -205,8 +232,7 @@ class MainWindow(QMainWindow):
             st = self.session.get_state()
             self._inspector.update_page(p, st)
             if doc.doc_type == "pdf":
-                active = st.block_index if st.is_playing else None
-                self._pdf_view.set_block_overlays(p.blocks, active)
+                self._pdf_view.set_block_overlays(p.blocks, st.block_index)
 
     def _on_poll(self) -> None:
         if not self.session:
@@ -220,14 +246,16 @@ class MainWindow(QMainWindow):
         if doc.doc_type == "pdf":
             self._pdf_view.set_highlight_bbox(bbox)
         else:
-            self._text_view.highlight_word_in_block(block, st.word_index)
+            if st.is_playing:
+                self._text_view.highlight_word_in_block(block, st.word_index)
+            else:
+                self._text_view.highlight_word_in_block(self.session.get_cursor_block(), None)
 
         if self._inspector.isVisible():
             page = self.session.current_page()
             self._inspector.update_page(page, st)
             if doc.doc_type == "pdf":
-                active = st.block_index if st.is_playing else None
-                self._pdf_view.set_block_overlays(page.blocks, active)
+                self._pdf_view.set_block_overlays(page.blocks, st.block_index)
         else:
             self._pdf_view.set_show_overlays(False)
             self._pdf_view.set_block_overlays([], None)
