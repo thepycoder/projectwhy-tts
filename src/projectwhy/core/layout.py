@@ -104,6 +104,44 @@ def analyze_layout(
     return blocks
 
 
+def _sort_words_into_lines(words: list) -> list:
+    """Group *words* into visual lines by Y proximity, then sort left-to-right
+    within each line and top-to-bottom across lines.
+
+    Adaptive tolerance: half the median word height so that words on the same
+    baseline cluster together even when individual Y values jitter slightly.
+    """
+    if not words:
+        return []
+
+    heights = [abs(w.bbox.y2 - w.bbox.y1) for w in words]
+    heights.sort()
+    median_h = heights[len(heights) // 2] if heights else 0
+    tolerance = max(median_h * 0.5, 2.0)
+
+    by_top = sorted(words, key=lambda w: min(w.bbox.y1, w.bbox.y2))
+
+    lines: list[list] = []
+    current_line: list = [by_top[0]]
+    current_y = min(by_top[0].bbox.y1, by_top[0].bbox.y2)
+
+    for w in by_top[1:]:
+        top = min(w.bbox.y1, w.bbox.y2)
+        if abs(top - current_y) <= tolerance:
+            current_line.append(w)
+        else:
+            lines.append(current_line)
+            current_line = [w]
+            current_y = top
+    lines.append(current_line)
+
+    result: list = []
+    for line in lines:
+        line.sort(key=lambda w: w.bbox.x1)
+        result.extend(line)
+    return result
+
+
 def assign_words_to_blocks(blocks: list[Block], words: list) -> None:
     """Mutate blocks: set words list and combined text."""
     for b in blocks:
@@ -138,7 +176,7 @@ def assign_words_to_blocks(blocks: list[Block], words: list) -> None:
             nearest.words.append(w)
 
     for b in blocks:
-        b.words.sort(key=lambda wp: (min(wp.bbox.y1, wp.bbox.y2), wp.bbox.x1))
+        b.words = _sort_words_into_lines(b.words)
         b.text = " ".join(w.text for w in b.words).strip()
 
 
@@ -172,10 +210,7 @@ def layout_and_assign_words(
         ]
     blocks = sort_blocks_reading_order(blocks, float(page_w), float(page_h))
     if not any(b.text.strip() for b in blocks) and words:
-        words_sorted = sorted(
-            words,
-            key=lambda w: (min(w.bbox.y1, w.bbox.y2), w.bbox.x1),
-        )
+        words_sorted = _sort_words_into_lines(words)
         merged_text = " ".join(w.text for w in words_sorted)
         blocks = [
             Block(
