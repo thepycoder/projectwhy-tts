@@ -15,16 +15,99 @@ from projectwhy.core.tts.base import TTSEngine
 
 
 BLOCK_CONFIG: dict[BlockType, dict[str, Any]] = {
-    BlockType.TITLE: {"speak": True, "pause_after": 1.0},
-    BlockType.TEXT: {"speak": True, "pause_after": 0.3},
-    BlockType.FIGURE: {"speak": False, "pause_after": 0.0},
-    BlockType.FIGURE_CAPTION: {"speak": True, "pause_after": 0.5},
-    BlockType.TABLE: {"speak": False, "pause_after": 0.0},
-    BlockType.TABLE_CAPTION: {"speak": True, "pause_after": 0.5},
-    BlockType.HEADER: {"speak": False, "pause_after": 0.0},
-    BlockType.FOOTER: {"speak": False, "pause_after": 0.0},
-    BlockType.EQUATION: {"speak": False, "pause_after": 0.0},
-    BlockType.REFERENCE: {"speak": False, "pause_after": 0.0},
+    BlockType.DOCUMENT_TITLE: {
+        "speak": True,
+        "pause_after": 1.0,
+        "keep_if_no_words": False,
+    },
+    BlockType.DOC_TITLE: {
+        "speak": True,
+        "pause_after": 1.0,
+        "keep_if_no_words": False,
+    },
+    BlockType.PARAGRAPH_TITLE: {
+        "speak": True,
+        "pause_after": 0.8,
+        "keep_if_no_words": False,
+    },
+    BlockType.TEXT: {"speak": True, "pause_after": 0.3, "keep_if_no_words": False},
+    BlockType.CONTENT: {"speak": True, "pause_after": 0.3, "keep_if_no_words": False},
+    BlockType.PAGE_NUMBER: {
+        "speak": False,
+        "pause_after": 0.0,
+        "keep_if_no_words": False,
+    },
+    BlockType.NUMBER: {
+        "speak": False,
+        "pause_after": 0.0,
+        "keep_if_no_words": False,
+    },
+    BlockType.ABSTRACT: {"speak": True, "pause_after": 0.4, "keep_if_no_words": False},
+    BlockType.TABLE_OF_CONTENTS: {
+        "speak": False,
+        "pause_after": 0.0,
+        "keep_if_no_words": False,
+    },
+    BlockType.REFERENCES: {
+        "speak": False,
+        "pause_after": 0.0,
+        "keep_if_no_words": False,
+    },
+    BlockType.FOOTNOTES: {
+        "speak": True,
+        "pause_after": 0.3,
+        "keep_if_no_words": False,
+    },
+    BlockType.HEADER: {"speak": False, "pause_after": 0.0, "keep_if_no_words": False},
+    BlockType.FOOTER: {"speak": False, "pause_after": 0.0, "keep_if_no_words": False},
+    BlockType.ALGORITHM: {"speak": True, "pause_after": 0.3, "keep_if_no_words": False},
+    BlockType.FORMULA: {"speak": False, "pause_after": 0.0, "keep_if_no_words": True},
+    BlockType.FORMULA_NUMBER: {
+        "speak": False,
+        "pause_after": 0.0,
+        "keep_if_no_words": True,
+    },
+    BlockType.IMAGE: {"speak": False, "pause_after": 0.0, "keep_if_no_words": True},
+    BlockType.FIGURE_CAPTION: {
+        "speak": True,
+        "pause_after": 0.5,
+        "keep_if_no_words": False,
+    },
+    BlockType.TABLE: {"speak": False, "pause_after": 0.0, "keep_if_no_words": True},
+    BlockType.TABLE_CAPTION: {
+        "speak": True,
+        "pause_after": 0.5,
+        "keep_if_no_words": False,
+    },
+    BlockType.SEAL: {"speak": False, "pause_after": 0.0, "keep_if_no_words": True},
+    BlockType.FIGURE_TITLE: {
+        "speak": True,
+        "pause_after": 0.6,
+        "keep_if_no_words": False,
+    },
+    BlockType.CHART_TITLE: {
+        "speak": True,
+        "pause_after": 0.6,
+        "keep_if_no_words": False,
+    },
+    BlockType.FIGURE: {"speak": False, "pause_after": 0.0, "keep_if_no_words": True},
+    BlockType.CHART: {"speak": False, "pause_after": 0.0, "keep_if_no_words": True},
+    BlockType.HEADER_IMAGE: {
+        "speak": False,
+        "pause_after": 0.0,
+        "keep_if_no_words": True,
+    },
+    BlockType.FOOTER_IMAGE: {
+        "speak": False,
+        "pause_after": 0.0,
+        "keep_if_no_words": True,
+    },
+    BlockType.ASIDE_TEXT: {"speak": True, "pause_after": 0.3, "keep_if_no_words": False},
+    BlockType.UNKNOWN: {
+        "speak": False,
+        "pause_after": 0.0,
+        "keep_if_no_words": False,
+    },
 }
 
 
@@ -38,8 +121,6 @@ class ReadingSession:
         *,
         layout_model: Any,
         pdf_scale: float = 2.0,
-        layout_conf: float = 0.25,
-        layout_imgsz: int = 1024,
     ) -> None:
         self.document = document
         self.pdf = pdf
@@ -47,8 +128,6 @@ class ReadingSession:
         self.player = player
         self.layout_model = layout_model
         self.pdf_scale = pdf_scale
-        self.layout_conf = layout_conf
-        self.layout_imgsz = layout_imgsz
 
         self.page_index = 0
         self.block_index = 0
@@ -70,8 +149,6 @@ class ReadingSession:
             self.pdf,
             self.layout_model,
             self.pdf_scale,
-            self.layout_conf,
-            self.layout_imgsz,
         )
 
     def current_page(self) -> Page:
@@ -90,8 +167,6 @@ class ReadingSession:
                 self.pdf,
                 self.layout_model,
                 self.pdf_scale,
-                self.layout_conf,
-                self.layout_imgsz,
             )
         return page
 
@@ -103,14 +178,20 @@ class ReadingSession:
 
     @staticmethod
     def _should_speak(block: Block) -> bool:
-        cfg = BLOCK_CONFIG.get(block.block_type, {"speak": True, "pause_after": 0.3})
+        cfg = BLOCK_CONFIG.get(
+            block.block_type,
+            {"speak": True, "pause_after": 0.3, "keep_if_no_words": False},
+        )
         if not block.text.strip() and cfg["speak"]:
             return False
         return bool(cfg["speak"])
 
     @staticmethod
     def _pause_after_block(block: Block) -> float:
-        cfg = BLOCK_CONFIG.get(block.block_type, {"speak": True, "pause_after": 0.3})
+        cfg = BLOCK_CONFIG.get(
+            block.block_type,
+            {"speak": True, "pause_after": 0.3, "keep_if_no_words": False},
+        )
         return float(cfg["pause_after"])
 
     @staticmethod

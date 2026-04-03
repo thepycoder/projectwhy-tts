@@ -127,8 +127,6 @@ class MainWindow(QMainWindow):
             self.player,
             layout_model=self.layout_model,
             pdf_scale=self.cfg.display.pdf_scale,
-            layout_conf=self.cfg.layout.confidence,
-            layout_imgsz=self.cfg.layout.imgsz,
         )
         self._inspector.reset()
 

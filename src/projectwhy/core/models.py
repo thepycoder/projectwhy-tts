@@ -2,26 +2,60 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
-from enum import Enum
-from typing import TYPE_CHECKING, Any
+from enum import StrEnum
+from typing import Any
 
-if TYPE_CHECKING:
-    import numpy as np
-    from PIL import Image
+logger = logging.getLogger(__name__)
 
 
-class BlockType(Enum):
-    TITLE = "title"
+class BlockType(StrEnum):
+    """Labels returned by PP-DocLayout / PP-DocLayout_plus layout detectors (snake_case).
+
+    Different checkpoints use slightly different vocabularies (e.g. ``doc_title`` vs
+    ``document_title``); we keep the model string as the enum value so the Inspector
+    matches inference output.
+    """
+
+    DOCUMENT_TITLE = "document_title"
+    DOC_TITLE = "doc_title"
+    PARAGRAPH_TITLE = "paragraph_title"
     TEXT = "text"
-    FIGURE = "figure"
+    CONTENT = "content"
+    PAGE_NUMBER = "page_number"
+    NUMBER = "number"
+    ABSTRACT = "abstract"
+    TABLE_OF_CONTENTS = "table_of_contents"
+    REFERENCES = "references"
+    FOOTNOTES = "footnotes"
+    HEADER = "header"
+    FOOTER = "footer"
+    ALGORITHM = "algorithm"
+    FORMULA = "formula"
+    FORMULA_NUMBER = "formula_number"
+    IMAGE = "image"
     FIGURE_CAPTION = "figure_caption"
     TABLE = "table"
     TABLE_CAPTION = "table_caption"
-    HEADER = "header"
-    FOOTER = "footer"
-    EQUATION = "equation"
-    REFERENCE = "reference"
+    SEAL = "seal"
+    FIGURE_TITLE = "figure_title"
+    CHART_TITLE = "chart_title"
+    FIGURE = "figure"
+    CHART = "chart"
+    HEADER_IMAGE = "header_image"
+    FOOTER_IMAGE = "footer_image"
+    ASIDE_TEXT = "aside_text"
+    UNKNOWN = "_unknown_"
+
+    @classmethod
+    def from_pp_label(cls, label: str) -> BlockType:
+        s = label.strip().lower().replace(" ", "_")
+        try:
+            return cls(s)
+        except ValueError:
+            logger.warning("Unknown layout label from model: %r — using UNKNOWN", label)
+            return cls.UNKNOWN
 
 
 @dataclass

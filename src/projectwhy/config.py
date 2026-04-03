@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 try:
     import tomllib
@@ -32,9 +31,12 @@ class TTSConfig:
 
 @dataclass
 class LayoutConfig:
-    model_path: str = ""
+    model_name: str = "PP-DocLayout-L"
+    model_dir: str = ""
     confidence: float = 0.25
-    imgsz: int = 1024
+    device: str | None = None
+    layout_nms: bool = True
+    enable_mkldnn: bool = False
 
 
 @dataclass
@@ -78,10 +80,19 @@ def load_config(path: str | Path | None = None) -> AppConfig:
         cfg.tts.openai.format = str(o.get("format", cfg.tts.openai.format))
 
     if "layout" in data:
-        l = data["layout"]
-        cfg.layout.model_path = str(l.get("model_path", "") or "")
-        cfg.layout.confidence = float(l.get("confidence", cfg.layout.confidence))
-        cfg.layout.imgsz = int(l.get("imgsz", cfg.layout.imgsz))
+        layout_data = data["layout"]
+        cfg.layout.model_name = str(layout_data.get("model_name", cfg.layout.model_name))
+        cfg.layout.model_dir = str(layout_data.get("model_dir", "") or "")
+        cfg.layout.confidence = float(layout_data.get("confidence", cfg.layout.confidence))
+        dev = layout_data.get("device", cfg.layout.device)
+        if dev in ("", "none", None):
+            cfg.layout.device = None
+        else:
+            cfg.layout.device = str(dev)
+        cfg.layout.layout_nms = bool(layout_data.get("layout_nms", cfg.layout.layout_nms))
+        cfg.layout.enable_mkldnn = bool(
+            layout_data.get("enable_mkldnn", cfg.layout.enable_mkldnn),
+        )
 
     if "display" in data:
         d = data["display"]

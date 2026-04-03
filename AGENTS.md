@@ -17,7 +17,7 @@ The boundary is `core/session.py` → `ReadingSession`. The GUI polls `get_state
 ## Key design decisions
 
 - **Kokoro TTS runs in-process** (no API server). Word timestamps come free from the synthesis forward pass — no whisper/alignment step.
-- **DocLayout-YOLO** detects semantic regions (title, paragraph, figure, table, etc.) on each PDF page. Text is extracted per-region, not blindly from the whole page. This drives reading order, skip/speak decisions, and scoped word highlighting.
+- **PP-DocLayout** (via **PaddleOCR** `LayoutDetection`) detects semantic regions using the model’s native label taxonomy (titles, text, tables, figures, formulas, etc.) on each PDF page. Text is extracted per-region, not blindly from the whole page. This drives reading order, skip/speak decisions, and scoped word highlighting.
 - **pypdfium2** (Apache 2.0) for PDF rendering and character-level text extraction.
 - **sounddevice** for audio playback with frame-counting position tracking.
 - **UV** for dependency management (`uv sync`, `uv run projectwhy`).
@@ -26,7 +26,7 @@ The boundary is `core/session.py` → `ReadingSession`. The GUI polls `get_state
 
 ```
 pypdfium2 renders page → PIL Image
-                           ├→ DocLayout-YOLO detects typed regions (blocks)
+                           ├→ PP-DocLayout detects typed regions (blocks)
 pypdfium2 extracts chars → words assigned into blocks → reading order sort
                            ↓
 Kokoro synthesizes block text → audio + word_timestamps

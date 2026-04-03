@@ -1,110 +1,80 @@
-"""DocLayout-YOLO integration."""
+"""PP-DocLayout (PaddleOCR LayoutDetection) integration."""
 
 from __future__ import annotations
 
-import logging
-
 import numpy as np
-from huggingface_hub import hf_hub_download
-from huggingface_hub.errors import LocalEntryNotFoundError
 from PIL import Image
 
 from projectwhy.core.models import Block, BlockType, BBox
 from projectwhy.core.reading_order import sort_blocks_reading_order
 
-logger = logging.getLogger(__name__)
-
 try:
-    from doclayout_yolo import YOLOv10
+    from paddleocr import LayoutDetection
 except ImportError:  # pragma: no cover
-    YOLOv10 = None  # type: ignore
-
-DEFAULT_LAYOUT_REPO = "juliozhao/DocLayout-YOLO-DocStructBench-imgsz1280-2501"
-DEFAULT_LAYOUT_FILE = "doclayout_yolo_docstructbench_imgsz1280_2501.pt"
+    LayoutDetection = None  # type: ignore[misc, assignment]
 
 
-def _label_to_block_type(name: str) -> BlockType:
-    n = name.lower().strip()
-    if any(k in n for k in ("title", "headline", "chapter", "section-header")):
-        return BlockType.TITLE
-    if "footer" in n or "page-footer" in n or "folio" in n:
-        return BlockType.FOOTER
-    if "header" in n or "page-header" in n:
-        return BlockType.HEADER
-    if n == "table":
-        return BlockType.TABLE
-    if "caption" in n:
-        if "table" in n:
-            return BlockType.TABLE_CAPTION
-        return BlockType.FIGURE_CAPTION
-    if any(k in n for k in ("figure", "picture", "image", "photo")):
-        return BlockType.FIGURE
-    if "formula" in n or "equation" in n:
-        return BlockType.EQUATION
-    if "reference" in n:
-        return BlockType.REFERENCE
-    return BlockType.TEXT
-
-
-def download_default_layout_weights() -> str:
-    try:
-        return hf_hub_download(
-            repo_id=DEFAULT_LAYOUT_REPO,
-            filename=DEFAULT_LAYOUT_FILE,
-            local_files_only=True,
-        )
-    except LocalEntryNotFoundError:
-        return hf_hub_download(repo_id=DEFAULT_LAYOUT_REPO, filename=DEFAULT_LAYOUT_FILE)
-
-
-def load_layout_model(weights_path: str | None = None):
-    if YOLOv10 is None:
-        raise RuntimeError("doclayout-yolo is not installed")
-    path = (weights_path or "").strip() or None
-    path = path or download_default_layout_weights()
-
-    # PyTorch 2.6+ defaults weights_only=True; DocLayout checkpoints need full unpickle.
-    import torch
-
-    _orig_torch_load = torch.load
-
-    def _torch_load_weights_compat(*args, **kwargs):  # noqa: ANN002, ANN003
-        kwargs.setdefault("weights_only", False)
-        return _orig_torch_load(*args, **kwargs)
-
-    torch.load = _torch_load_weights_compat  # type: ignore[assignment]
-    try:
-        return YOLOv10(path)
-    finally:
-        torch.load = _orig_torch_load  # type: ignore[assignment]
+def load_layout_model(
+    model_name: str = "PP-DocLayout-M",
+    model_dir: str | None = None,
+    threshold: float = 0.25,
+    device: str | None = None,
+    *,
+    layout_nms: bool = True,
+    enable_mkldnn: bool = False,
+):
+    """Load a PP-DocLayout-S / M / L (or compatible) layout detector."""
+    if LayoutDetection is None:
+        raise RuntimeError("paddleocr is not installed")
+    kwargs: dict = {
+        "model_name": model_name,
+        "threshold": threshold,
+        "layout_nms": layout_nms,
+        "enable_mkldnn": enable_mkldnn,
+    }
+    md = (model_dir or "").strip() or None
+    if md is not None:
+        kwargs["model_dir"] = md
+    if device is not None and device.strip():
+        kwargs["device"] = device.strip()
+    return LayoutDetection(**kwargs)
 
 
 def analyze_layout(
     image: Image.Image,
     model,
-    conf: float = 0.25,
-    imgsz: int = 1024,
 ) -> list[Block]:
-    """Run layout detection; return blocks with types and bboxes (no text, words)."""
-    arr = np.array(image.convert("RGB"))
-    # BGR for OpenCV-style models (Ultralytics accepts ndarray)
-    arr_bgr = arr[:, :, ::-1].copy()
-    det_res = model.predict(arr_bgr, imgsz=imgsz, conf=conf, verbose=False)
-    if not det_res or det_res[0].boxes is None or len(det_res[0].boxes) == 0:
+    """Run layout detection; return blocks with PP-native types and bboxes (no text/words)."""
+    arr = np.asarray(image.convert("RGB"), dtype=np.uint8)
+    raw = model.predict(arr)
+    if not raw:
         return []
 
-    res = det_res[0]
-    names: dict = getattr(res, "names", None) or getattr(model, "names", {}) or {}
+    res = raw[0]
+    boxes = res["boxes"]
+    if not boxes:
+        return []
+
     blocks: list[Block] = []
-    for box in res.boxes:
-        cls_id = int(box.cls[0].item() if hasattr(box.cls[0], "item") else box.cls[0])
-        label = str(names.get(cls_id, cls_id))
-        x1, y1, x2, y2 = box.xyxy[0].tolist()
+    for box in boxes:
+        label = str(box.get("label", ""))
+        coord = box.get("coordinate")
+        if not coord or len(coord) < 4:
+            continue
+        c = [float(x) for x in coord]
+        if len(c) == 4:
+            x1, y1, x2, y2 = c[0], c[1], c[2], c[3]
+        elif len(c) == 8:
+            xs, ys = c[0::2], c[1::2]
+            x1, x2 = min(xs), max(xs)
+            y1, y2 = min(ys), max(ys)
+        else:
+            continue
         blocks.append(
             Block(
-                block_type=_label_to_block_type(label),
+                block_type=BlockType.from_pp_label(label),
                 text="",
-                bbox=BBox(float(x1), float(y1), float(x2), float(y2)),
+                bbox=BBox(x1, y1, x2, y2),
             )
         )
     return blocks
@@ -186,16 +156,22 @@ def assign_words_to_blocks(blocks: list[Block], words: list) -> None:
         b.text = " ".join(w.text for w in b.words).strip()
 
 
+def _block_keeps_without_words(block_type: BlockType) -> bool:
+    """Lazy import avoids import cycle (session imports document → layout)."""
+    from projectwhy.core.session import BLOCK_CONFIG
+
+    cfg = BLOCK_CONFIG.get(block_type, {})
+    return bool(cfg.get("keep_if_no_words", False))
+
+
 def layout_and_assign_words(
     image: Image.Image,
     words: list,
     model,
     page_w: int,
     page_h: int,
-    conf: float,
-    imgsz: int,
 ) -> list[Block]:
-    blocks = analyze_layout(image, model, conf=conf, imgsz=imgsz)
+    blocks = analyze_layout(image, model)
     if not blocks:
         one = Block(
             block_type=BlockType.TEXT,
@@ -204,7 +180,7 @@ def layout_and_assign_words(
         )
         blocks = [one]
     assign_words_to_blocks(blocks, words)
-    blocks = [b for b in blocks if b.text or b.block_type in (BlockType.FIGURE, BlockType.TABLE)]
+    blocks = [b for b in blocks if b.text or _block_keeps_without_words(b.block_type)]
     if not blocks:
         blocks = [
             Block(

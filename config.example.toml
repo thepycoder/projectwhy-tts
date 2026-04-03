@@ -12,9 +12,16 @@ voice = "alloy"
 format = "mp3"
 
 [layout]
-model_path = ""
+# PP-DocLayout-S, PP-DocLayout-M, or PP-DocLayout-L
+model_name = "PP-DocLayout-M"
+# Optional: directory with local Paddle layout model weights (otherwise auto-download)
+model_dir = ""
 confidence = 0.25
-imgsz = 1024
+# e.g. "cpu", "gpu", "gpu:0" — omit to let Paddle pick a default
+device = ""
+layout_nms = true
+# Some CPU builds crash with oneDNN; keep false unless you know yours works
+enable_mkldnn = false
 
 [display]
 pdf_scale = 2.0

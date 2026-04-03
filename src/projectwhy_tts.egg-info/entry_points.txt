@@ -1,2 +1,0 @@
-[console_scripts]
-projectwhy = projectwhy.__main__:main

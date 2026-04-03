@@ -1,6 +1,6 @@
 # Inspector (debug / layout UI)
 
-The **Inspector** is a right-side `QDockWidget` (menu **View → Inspector**) that helps anyone see how the app interprets a PDF page: YOLO-style layout blocks, reading order, what text is sent to TTS, and optional bbox overlays on the main page.
+The **Inspector** is a right-side `QDockWidget` (menu **View → Inspector**) that helps anyone see how the app interprets a PDF page: PP-DocLayout block types and bboxes, reading order, what text is sent to TTS, and optional bbox overlays on the main page.
 
 ## Design goals
 

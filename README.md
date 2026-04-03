@@ -1,6 +1,6 @@
 # projectwhy-tts
 
-Local PDF/EPUB reader with Kokoro TTS, DocLayout-YOLO layout analysis, and word-level highlights (PyQt6).
+Local PDF/EPUB reader with Kokoro TTS, PP-DocLayout (PaddleOCR) region detection, and word-level highlights (PyQt6).
 
 ## Setup
 
@@ -21,13 +21,15 @@ uv run projectwhy path/to/book.pdf
 uv run projectwhy path/to/book.epub
 ```
 
-First run downloads Kokoro weights (via Hugging Face) and the layout model (~40MB).
+First run downloads Kokoro weights (via Hugging Face) and the PP-DocLayout weights (via PaddleX cache under `~/.paddlex`, size depends on S/M/L variant).
+
+On some Linux CPU builds, Paddle oneDNN can fail; the example config sets `enable_mkldnn = false`. You can set `PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK=True` to skip PaddleX’s model-host connectivity check at import time.
 
 ## Requirements
 
 - Python 3.11+
 - Audio device (speakers) for playback
-- Optional: CUDA for faster layout + Kokoro (CPU works)
+- Optional: GPU for faster layout (`[layout] device = "gpu"`) and Kokoro TTS (CPU works for both)
 
 ## License
 
