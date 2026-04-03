@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from projectwhy.core.models import Page, ReadingState
+from projectwhy.core.prefetch import BlockJob, JobStatus
 from projectwhy.core.session import ReadingSession
 from projectwhy.gui.inspector.colors import rgb_for_block_type
 
@@ -134,6 +135,66 @@ class DetailPanel(QWidget):
         self._words.setPlainText("\n".join(lines) if lines else "(no words)")
 
 
+_STATUS_COLORS: dict[JobStatus, tuple[int, int, int, int]] = {
+    JobStatus.SYNTHESIZING: (200, 220, 255, 140),
+    JobStatus.READY: (180, 255, 180, 140),
+    JobStatus.PLAYING: (255, 220, 100, 140),
+    JobStatus.DONE: (220, 220, 220, 100),
+}
+
+
+class PipelinePanel(QWidget):
+    """Shows the prefetch pipeline: which blocks are being synthesized / ready / playing."""
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        lay = QVBoxLayout(self)
+
+        self._table = QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["Page", "Block", "Type", "Status"])
+        header = self._table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        lay.addWidget(self._table)
+
+        self._empty_label = QLabel("Not playing")
+        self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self._empty_label)
+
+    def update_jobs(self, jobs: list[BlockJob]) -> None:
+        has_jobs = bool(jobs)
+        self._table.setVisible(has_jobs)
+        self._empty_label.setVisible(not has_jobs)
+        if not has_jobs:
+            self._table.setRowCount(0)
+            return
+
+        base_flags = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
+        self._table.setRowCount(len(jobs))
+        for i, job in enumerate(jobs):
+            page_item = QTableWidgetItem(str(job.page_index + 1))
+            page_item.setFlags(base_flags)
+            self._table.setItem(i, 0, page_item)
+
+            block_item = QTableWidgetItem(str(job.block_index))
+            block_item.setFlags(base_flags)
+            self._table.setItem(i, 1, block_item)
+
+            type_text = job.block.block_type.value if job.block else "—"
+            type_item = QTableWidgetItem(type_text)
+            type_item.setFlags(base_flags)
+            self._table.setItem(i, 2, type_item)
+
+            status_item = QTableWidgetItem(job.status.value)
+            status_item.setFlags(base_flags)
+            rgba = _STATUS_COLORS.get(job.status)
+            if rgba:
+                status_item.setBackground(QColor(*rgba))
+            self._table.setItem(i, 3, status_item)
+
+
 class InspectorDock(QDockWidget):
     overlay_toggled = pyqtSignal(bool)
 
@@ -147,6 +208,8 @@ class InspectorDock(QDockWidget):
         tabs.addTab(self._layout_panel, "Layout")
         self._detail = DetailPanel()
         tabs.addTab(self._detail, "Detail")
+        self._pipeline = PipelinePanel()
+        tabs.addTab(self._pipeline, "Pipeline")
         self.setWidget(tabs)
 
     def reset(self) -> None:
@@ -158,6 +221,9 @@ class InspectorDock(QDockWidget):
     def update_page(self, page: Page, state: ReadingState) -> None:
         self._layout_panel.update_page(page, state)
         self._detail.update_page(page, state)
+
+    def update_pipeline(self, jobs: list[BlockJob]) -> None:
+        self._pipeline.update_jobs(jobs)
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)

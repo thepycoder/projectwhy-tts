@@ -8,9 +8,10 @@ from typing import Any
 
 import pypdfium2 as pdfium
 
-from projectwhy.core.document import ensure_pdf_neighbor_pages_loaded, ensure_pdf_page_loaded
+from projectwhy.core.document import ensure_pdf_page_loaded
 from projectwhy.core.models import BBox, Block, BlockType, Document, Page, ReadingState, WordPosition, WordTimestamp
 from projectwhy.core.player import AudioPlayer
+from projectwhy.core.prefetch import Prefetcher
 from projectwhy.core.tts.base import TTSEngine
 
 
@@ -131,10 +132,12 @@ class ReadingSession:
 
         self.page_index = 0
         self.block_index = 0
-        self._lock = threading.Lock()
+        self._page_lock = threading.Lock()
+        self._tts_lock = threading.Lock()
         self._utterance_done = threading.Event()
         self._stop = threading.Event()
         self._worker: threading.Thread | None = None
+        self.prefetcher: Prefetcher | None = None
 
         self._current_timestamps: list[WordTimestamp] | None = None
         self._current_alignment: list[int] | None = None
@@ -143,16 +146,26 @@ class ReadingSession:
     def _ensure_page(self, idx: int) -> Page:
         if self.document.doc_type != "pdf" or self.pdf is None:
             return self.document.pages[idx]
-        return ensure_pdf_page_loaded(
-            self.document,
-            idx,
-            self.pdf,
-            self.layout_model,
-            self.pdf_scale,
-        )
+        with self._page_lock:
+            return ensure_pdf_page_loaded(
+                self.document,
+                idx,
+                self.pdf,
+                self.layout_model,
+                self.pdf_scale,
+            )
 
     def current_page(self) -> Page:
         return self._ensure_page(self.page_index)
+
+    def _ensure_neighbor_pages(self) -> None:
+        """Pre-load previous, current, and next PDF pages (all through the page lock)."""
+        if self.document.doc_type != "pdf" or self.pdf is None:
+            return
+        for delta in (-1, 0, 1):
+            i = self.page_index + delta
+            if 0 <= i < len(self.document.pages):
+                self._ensure_page(i)
 
     def go_to_page(self, page_index: int) -> Page:
         if page_index < 0 or page_index >= len(self.document.pages):
@@ -160,14 +173,7 @@ class ReadingSession:
         self.page_index = page_index
         self.block_index = 0
         page = self._ensure_page(page_index)
-        if self.document.doc_type == "pdf" and self.pdf is not None:
-            ensure_pdf_neighbor_pages_loaded(
-                self.document,
-                page_index,
-                self.pdf,
-                self.layout_model,
-                self.pdf_scale,
-            )
+        self._ensure_neighbor_pages()
         return page
 
     def next_page(self) -> Page:
@@ -191,14 +197,7 @@ class ReadingSession:
         if self.page_index + 1 < len(self.document.pages):
             self.page_index += 1
             self.block_index = 0
-            if self.document.doc_type == "pdf" and self.pdf is not None:
-                ensure_pdf_neighbor_pages_loaded(
-                    self.document,
-                    self.page_index,
-                    self.pdf,
-                    self.layout_model,
-                    self.pdf_scale,
-                )
+            self._ensure_neighbor_pages()
 
     def prev_block(self) -> None:
         if self.block_index > 0:
@@ -209,14 +208,7 @@ class ReadingSession:
         self.page_index -= 1
         prev = self._ensure_page(self.page_index)
         self.block_index = max(0, len(prev.blocks) - 1)
-        if self.document.doc_type == "pdf" and self.pdf is not None:
-            ensure_pdf_neighbor_pages_loaded(
-                self.document,
-                self.page_index,
-                self.pdf,
-                self.layout_model,
-                self.pdf_scale,
-            )
+        self._ensure_neighbor_pages()
 
     @staticmethod
     def _should_speak(block: Block) -> bool:
@@ -268,51 +260,37 @@ class ReadingSession:
 
         return mapping
 
-    def _advance_to_next_speakable(self, page: Page) -> bool:
-        """Increment block_index to next speakable block; flip page if needed. Returns False if end."""
-        while True:
-            while self.block_index < len(page.blocks):
-                b = page.blocks[self.block_index]
-                if self._should_speak(b):
-                    return True
-                self.block_index += 1
-
-            if self.page_index + 1 >= len(self.document.pages):
-                return False
-
-            self.page_index += 1
-            self.block_index = 0
-            page = self._ensure_page(self.page_index)
-
     def _on_utterance_done(self) -> None:
         self._utterance_done.set()
 
     def _playback_loop(self) -> None:
+        prefetcher = self.prefetcher
+        if prefetcher is None:
+            return
+
         while not self._stop.is_set():
-            page = self._ensure_page(self.page_index)
-            if not self._advance_to_next_speakable(page):
+            job = prefetcher.take_next()
+            if job is None:
                 break
 
-            page = self._ensure_page(self.page_index)
-            block = page.blocks[self.block_index]
-            self._current_block = block
-            self._current_timestamps = None
-            self._current_alignment = None
-
-            res = self.tts.synthesize(block.text)
-            self._current_timestamps = res.word_timestamps
-            self._current_alignment = (
-                self._build_alignment(block.words, res.word_timestamps)
-                if res.word_timestamps
-                else None
+            self.page_index = job.page_index
+            self.block_index = job.block_index
+            self._current_block = job.block
+            self._current_timestamps = (
+                job.tts_result.word_timestamps if job.tts_result else None
             )
+            self._current_alignment = job.alignment
 
             if self._stop.is_set():
                 break
 
             self._utterance_done.clear()
-            if res.audio is not None and len(res.audio) > 0:
-                self.player.play(res.audio, res.sample_rate, on_complete=self._on_utterance_done)
+            if job.tts_result and job.tts_result.audio is not None and len(job.tts_result.audio) > 0:
+                self.player.play(
+                    job.tts_result.audio,
+                    job.tts_result.sample_rate,
+                    on_complete=self._on_utterance_done,
+                )
                 self._utterance_done.wait(timeout=7200.0)
             else:
                 self._on_utterance_done()
@@ -320,8 +298,7 @@ class ReadingSession:
             if self._stop.is_set():
                 break
 
-            time.sleep(self._pause_after_block(block))
-            self.block_index += 1
+            time.sleep(self._pause_after_block(job.block))
 
         self.player.stop()
         self._current_block = None
@@ -332,12 +309,32 @@ class ReadingSession:
         if self._worker is not None and self._worker.is_alive():
             return
         self._stop.clear()
-        self._worker = threading.Thread(target=self._playback_loop, name="reading-playback", daemon=True)
+        self.prefetcher = Prefetcher(
+            self.document,
+            self.pdf,
+            self.tts,
+            layout_model=self.layout_model,
+            pdf_scale=self.pdf_scale,
+            should_speak=self._should_speak,
+            build_alignment=self._build_alignment,
+            page_lock=self._page_lock,
+            tts_lock=self._tts_lock,
+        )
+        self.prefetcher.start(self.page_index, self.block_index)
+        self._worker = threading.Thread(
+            target=self._playback_loop, name="reading-playback", daemon=True,
+        )
         self._worker.start()
+
+    def _stop_prefetcher(self) -> None:
+        if self.prefetcher is not None:
+            self.prefetcher.stop()
+            self.prefetcher = None
 
     def pause(self) -> None:
         """Stop audio and background worker; keeps page/block cursor."""
         self._stop.set()
+        self._stop_prefetcher()
         self.player.stop()
         self._utterance_done.set()
         if self._worker is not None:
@@ -347,6 +344,7 @@ class ReadingSession:
 
     def stop(self) -> None:
         self._stop.set()
+        self._stop_prefetcher()
         self.player.stop()
         self._utterance_done.set()
         if self._worker is not None:

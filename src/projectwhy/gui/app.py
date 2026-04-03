@@ -37,6 +37,7 @@ class MainWindow(QMainWindow):
         self.player = AudioPlayer()
         self.session: ReadingSession | None = None
         self._pdf = None
+        self._last_poll_page: int = -1
 
         self.setWindowTitle("projectwhy-tts")
         self._stack = QStackedWidget()
@@ -131,6 +132,7 @@ class MainWindow(QMainWindow):
             layout_model=self.layout_model,
             pdf_scale=self.cfg.display.pdf_scale,
         )
+        self._last_poll_page = -1
         self._inspector.reset()
 
         total = len(doc.pages)
@@ -238,7 +240,15 @@ class MainWindow(QMainWindow):
         if not self.session:
             return
         doc = self.session.document
-        self._controls.set_page_indicator(self.session.page_index, len(doc.pages))
+        current_pi = self.session.page_index
+        self._controls.set_page_indicator(current_pi, len(doc.pages))
+
+        if doc.doc_type == "pdf" and current_pi != self._last_poll_page:
+            self._last_poll_page = current_pi
+            p = self.session.current_page()
+            if p.image is not None:
+                self._pdf_view.set_page_image(p.image)
+
         bbox = self.session.get_active_word_bbox()
         block = self.session.get_active_block()
         st = self.session.get_state()
@@ -256,6 +266,8 @@ class MainWindow(QMainWindow):
             self._inspector.update_page(page, st)
             if doc.doc_type == "pdf":
                 self._pdf_view.set_block_overlays(page.blocks, st.block_index)
+            pf = self.session.prefetcher
+            self._inspector.update_pipeline(pf.peek() if pf else [])
         else:
             self._pdf_view.set_show_overlays(False)
             self._pdf_view.set_block_overlays([], None)
