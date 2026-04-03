@@ -39,7 +39,7 @@ class LayoutConfig:
 
 @dataclass
 class DisplayConfig:
-    pdf_scale: float = 2.0
+    pdf_scale: float = 4.0
     highlight_color: tuple[int, int, int, int] = (255, 200, 0, 128)
 
 
