@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 
 import numpy as np
 from huggingface_hub import hf_hub_download
+from huggingface_hub.errors import LocalEntryNotFoundError
 from PIL import Image
 
 from projectwhy.core.models import Block, BlockType, BBox
@@ -47,8 +47,14 @@ def _label_to_block_type(name: str) -> BlockType:
 
 
 def download_default_layout_weights() -> str:
-    path = hf_hub_download(repo_id=DEFAULT_LAYOUT_REPO, filename=DEFAULT_LAYOUT_FILE)
-    return path
+    try:
+        return hf_hub_download(
+            repo_id=DEFAULT_LAYOUT_REPO,
+            filename=DEFAULT_LAYOUT_FILE,
+            local_files_only=True,
+        )
+    except LocalEntryNotFoundError:
+        return hf_hub_download(repo_id=DEFAULT_LAYOUT_REPO, filename=DEFAULT_LAYOUT_FILE)
 
 
 def load_layout_model(weights_path: str | None = None):

@@ -45,3 +45,4 @@ GUI polls position → matches to word timestamp → highlights word bbox on pag
 5. **Block behavior is configurable** — titles get paused after, figures/tables get skipped. See `BLOCK_CONFIG` in `core/session.py`.
 6. **Use ruff** for linting (line-length 100). Run `uv run ruff check`.
 7. **Readability** a naive, but straighforward logical approach is better than a prematurely optimized mess. Both structurally and syntax-wise, engineer for understandability and maintainability.
+8. **No backwards compatibility** when creating a new feature, always assume backwards compatibility with existing systems is not needed. Only when explicitly asked.
