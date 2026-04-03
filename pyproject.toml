@@ -17,6 +17,7 @@ dependencies = [
     "ebooklib>=0.18",
     "beautifulsoup4>=4.12",
     "huggingface-hub>=0.20",
+    "ruff>=0.15.9",
 ]
 
 [project.optional-dependencies]
