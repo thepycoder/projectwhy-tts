@@ -1,12 +1,13 @@
+- [x] Set up a good testing harness
 - [x] Sometimes it seems a sentence is cut-off mid voice by a linebreak. Could be yolo?
 - [ ] Double column layouts order is incorrect.
 - [x] In general: order does not fully work yet. In sewtha.pdf, words that are line-breaked seem to jump forward in the order.
 - [ ] Speed should not be native kokoro speed, but audio ramp with pitch correction as done in original openreader
-- [ ] Set up tests on specific PDFs that might give problems
+- [x] Set up tests on specific PDFs that might give problems
 - [ ] Multithreading: both kokoro and yolo requests should be queued and pre-loaded, even from following pages, so there is no stutter
 - [ ] Hover over words to start playing there
-- [ ] Page number navigation
-- [ ] Jump back and forward in yolo blocks from GUI
+- [x] Page number navigation
+- [x] Jump back and forward in yolo blocks from GUI
 - [ ] Custom dictionary / substitutions
 - [ ] Skipping UI for specific layout block types (need mayor settings plan)
 - [ ] Add custom API options for TTS (OpenAI, Mistral)

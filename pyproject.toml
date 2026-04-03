@@ -24,6 +24,15 @@ dependencies = [
 [project.optional-dependencies]
 openai = ["openai>=1.0"]
 
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: real PDF + layout model (deselect with -m 'not slow')",
+]
+
 [project.scripts]
 projectwhy = "projectwhy.__main__:main"
 
