@@ -5,17 +5,17 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import QTimer, QUrl
+from PyQt6.QtCore import Qt, QTimer, QUrl
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QStackedWidget
 
 from projectwhy.config import AppConfig
 from projectwhy.core.document import load_document
-from projectwhy.core.layout import load_layout_model
 from projectwhy.core.player import AudioPlayer
 from projectwhy.core.session import ReadingSession
 from projectwhy.core.tts.base import TTSEngine
 from projectwhy.gui.controls import ControlBar
+from projectwhy.gui.inspector.dock import InspectorDock
 from projectwhy.gui.pdf_view import PDFView
 from projectwhy.gui.text_view import TextDocView
 
@@ -63,6 +63,11 @@ class MainWindow(QMainWindow):
         self._poll.setInterval(33)
         self._poll.timeout.connect(self._on_poll)
 
+        self._inspector = InspectorDock(self)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._inspector)
+        self._inspector.overlay_toggled.connect(self._pdf_view.set_show_overlays)
+        self._inspector.hide()
+
         self._create_menus()
 
         if initial_path:
@@ -74,6 +79,12 @@ class MainWindow(QMainWindow):
         a_open.triggered.connect(self._menu_open)
         a_settings = m.addAction("Settings…")
         a_settings.triggered.connect(self._menu_settings)
+
+        view = self.menuBar().addMenu("View")
+        self._inspector_action = view.addAction("Inspector")
+        self._inspector_action.setCheckable(True)
+        self._inspector_action.toggled.connect(self._inspector.setVisible)
+        self._inspector.visibilityChanged.connect(self._inspector_action.setChecked)
 
     def _menu_settings(self) -> None:
         base = Path.cwd()
@@ -119,6 +130,7 @@ class MainWindow(QMainWindow):
             layout_conf=self.cfg.layout.confidence,
             layout_imgsz=self.cfg.layout.imgsz,
         )
+        self._inspector.reset()
 
         total = len(doc.pages)
         self._controls.set_page_indicator(0, total)
@@ -190,6 +202,14 @@ class MainWindow(QMainWindow):
             text = p.raw_text or "\n\n".join(b.text for b in p.blocks)
             self._text_view.set_document_text(text, p.blocks)
 
+        if self._inspector.isVisible():
+            p = self.session.current_page()
+            st = self.session.get_state()
+            self._inspector.update_page(p, st)
+            if doc.doc_type == "pdf":
+                active = st.block_index if st.is_playing else None
+                self._pdf_view.set_block_overlays(p.blocks, active)
+
     def _on_poll(self) -> None:
         if not self.session:
             return
@@ -203,6 +223,16 @@ class MainWindow(QMainWindow):
             self._pdf_view.set_highlight_bbox(bbox)
         else:
             self._text_view.highlight_word_in_block(block, st.word_index)
+
+        if self._inspector.isVisible():
+            page = self.session.current_page()
+            self._inspector.update_page(page, st)
+            if doc.doc_type == "pdf":
+                active = st.block_index if st.is_playing else None
+                self._pdf_view.set_block_overlays(page.blocks, active)
+        else:
+            self._pdf_view.set_show_overlays(False)
+            self._pdf_view.set_block_overlays([], None)
 
     def closeEvent(self, e) -> None:  # noqa: ANN001
         self._poll.stop()
