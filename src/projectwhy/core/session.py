@@ -9,7 +9,7 @@ from typing import Any
 import pypdfium2 as pdfium
 
 from projectwhy.core.document import ensure_pdf_neighbor_pages_loaded, ensure_pdf_page_loaded
-from projectwhy.core.models import BBox, Block, BlockType, Document, Page, ReadingState
+from projectwhy.core.models import BBox, Block, BlockType, Document, Page, ReadingState, WordPosition, WordTimestamp
 from projectwhy.core.player import AudioPlayer
 from projectwhy.core.tts.base import TTSEngine
 
@@ -57,7 +57,8 @@ class ReadingSession:
         self._stop = threading.Event()
         self._worker: threading.Thread | None = None
 
-        self._current_timestamps: list | None = None
+        self._current_timestamps: list[WordTimestamp] | None = None
+        self._current_alignment: list[int] | None = None
         self._current_block: Block | None = None
 
     def _ensure_page(self, idx: int) -> Page:
@@ -112,6 +113,38 @@ class ReadingSession:
         cfg = BLOCK_CONFIG.get(block.block_type, {"speak": True, "pause_after": 0.3})
         return float(cfg["pause_after"])
 
+    @staticmethod
+    def _build_alignment(block_words: list[WordPosition], word_timestamps: list[WordTimestamp]) -> list[int]:
+        """Map each timestamp index to a block.words index via character offsets in space-joined text."""
+        if not block_words or not word_timestamps:
+            return []
+
+        word_starts: list[int] = []
+        pos = 0
+        for w in block_words:
+            word_starts.append(pos)
+            pos += len(w.text) + 1
+
+        block_text = " ".join(w.text for w in block_words)
+        mapping: list[int] = []
+        search_from = 0
+
+        for wt in word_timestamps:
+            tok_pos = block_text.find(wt.text, search_from)
+            if tok_pos < 0:
+                mapping.append(mapping[-1] if mapping else 0)
+                continue
+            search_from = tok_pos + len(wt.text)
+
+            wi = 0
+            for i, ws in enumerate(word_starts):
+                if ws > tok_pos:
+                    break
+                wi = i
+            mapping.append(wi)
+
+        return mapping
+
     def _advance_to_next_speakable(self, page: Page) -> bool:
         """Increment block_index to next speakable block; flip page if needed. Returns False if end."""
         while True:
@@ -141,9 +174,15 @@ class ReadingSession:
             block = page.blocks[self.block_index]
             self._current_block = block
             self._current_timestamps = None
+            self._current_alignment = None
 
             res = self.tts.synthesize(block.text)
             self._current_timestamps = res.word_timestamps
+            self._current_alignment = (
+                self._build_alignment(block.words, res.word_timestamps)
+                if res.word_timestamps
+                else None
+            )
 
             if self._stop.is_set():
                 break
@@ -164,6 +203,7 @@ class ReadingSession:
         self.player.stop()
         self._current_block = None
         self._current_timestamps = None
+        self._current_alignment = None
 
     def play(self) -> None:
         if self._worker is not None and self._worker.is_alive():
@@ -218,13 +258,19 @@ class ReadingSession:
     def _word_index_for_position(self, position_sec: float) -> int | None:
         ts = self._current_timestamps
         block = self._current_block
+        alignment = self._current_alignment
         if not ts or not block:
             return None
         for i, wt in enumerate(ts):
             if wt.start_sec <= position_sec < wt.end_sec:
+                if alignment and i < len(alignment):
+                    return alignment[i]
                 return min(i, max(0, len(block.words) - 1))
         if ts and position_sec >= ts[-1].end_sec:
-            return min(len(ts) - 1, max(0, len(block.words) - 1))
+            idx = len(ts) - 1
+            if alignment and idx < len(alignment):
+                return alignment[idx]
+            return min(idx, max(0, len(block.words) - 1))
         return 0 if ts else None
 
     def get_active_block(self) -> Block | None:

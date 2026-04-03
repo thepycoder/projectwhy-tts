@@ -42,17 +42,12 @@ class TextDocView(QTextBrowser):
         hcur = QTextCursor(self.document())
         from_pos = 0
         found_at = -1
-        for i, b in enumerate(self._blocks):
+        for b in self._blocks:
             if b is block:
-                chunk_start = from_pos
-                local = b.text.find(needle)
-                if local >= 0:
-                    found_at = chunk_start + local
+                offset_in_block = sum(len(b.words[j].text) + 1 for j in range(word_index))
+                found_at = from_pos + offset_in_block
                 break
             from_pos += len(b.text) + 2
-        if found_at < 0:
-            # Fallback: search in full document
-            found_at = self._plain.find(needle)
 
         if found_at < 0:
             return
