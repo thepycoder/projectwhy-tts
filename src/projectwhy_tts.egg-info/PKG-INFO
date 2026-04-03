@@ -1,0 +1,55 @@
+Metadata-Version: 2.4
+Name: projectwhy-tts
+Version: 0.1.0
+Summary: Local PDF/EPUB reader with Kokoro TTS and word highlighting
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: kokoro>=0.9
+Requires-Dist: misaki[en]>=0.8
+Requires-Dist: dill>=0.3.8
+Requires-Dist: pypdfium2>=4
+Requires-Dist: doclayout-yolo>=0.0.4
+Requires-Dist: sounddevice>=0.5
+Requires-Dist: numpy>=1.26
+Requires-Dist: Pillow>=10
+Requires-Dist: PyQt6>=6.6
+Requires-Dist: ebooklib>=0.18
+Requires-Dist: beautifulsoup4>=4.12
+Requires-Dist: huggingface-hub>=0.20
+Provides-Extra: openai
+Requires-Dist: openai>=1.0; extra == "openai"
+
+# projectwhy-tts
+
+Local PDF/EPUB reader with Kokoro TTS, DocLayout-YOLO layout analysis, and word-level highlights (PyQt6).
+
+## Setup
+
+```bash
+cd projectwhy-tts
+uv venv
+uv sync
+# Optional OpenAI TTS:
+uv sync --extra openai
+```
+
+Copy `config.example.toml` to `config.toml` and adjust.
+
+## Run
+
+```bash
+uv run projectwhy path/to/book.pdf
+uv run projectwhy path/to/book.epub
+```
+
+First run downloads Kokoro weights (via Hugging Face) and the layout model (~40MB).
+
+## Requirements
+
+- Python 3.11+
+- Audio device (speakers) for playback
+- Optional: CUDA for faster layout + Kokoro (CPU works)
+
+## License
+
+Dependencies include models and libraries under their respective licenses (see each provider).

@@ -1,0 +1,21 @@
+[tts]
+engine = "kokoro"
+voice = "af_heart"
+speed = 1.0
+device = "cpu"
+
+[tts.openai]
+api_key = ""
+base_url = "https://api.openai.com/v1"
+model = "tts-1"
+voice = "alloy"
+format = "mp3"
+
+[layout]
+model_path = ""
+confidence = 0.25
+imgsz = 1024
+
+[display]
+pdf_scale = 2.0
+highlight_color = [255, 200, 0, 128]

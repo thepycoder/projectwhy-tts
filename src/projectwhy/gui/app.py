@@ -1,0 +1,236 @@
+"""Main PyQt6 application window."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+from PyQt6.QtCore import QTimer, QUrl
+from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QStackedWidget
+
+from projectwhy.config import AppConfig
+from projectwhy.core.document import load_document
+from projectwhy.core.layout import load_layout_model
+from projectwhy.core.player import AudioPlayer
+from projectwhy.core.session import ReadingSession
+from projectwhy.core.tts.base import TTSEngine
+from projectwhy.gui.controls import ControlBar
+from projectwhy.gui.pdf_view import PDFView
+from projectwhy.gui.text_view import TextDocView
+
+logger = logging.getLogger(__name__)
+
+
+class MainWindow(QMainWindow):
+    def __init__(
+        self,
+        cfg: AppConfig,
+        tts: TTSEngine,
+        layout_model,
+        initial_path: str | None = None,
+    ) -> None:
+        super().__init__()
+        self.cfg = cfg
+        self.tts = tts
+        self.layout_model = layout_model
+        self.player = AudioPlayer()
+        self.session: ReadingSession | None = None
+        self._pdf = None
+
+        self.setWindowTitle("projectwhy-tts")
+        self._stack = QStackedWidget()
+        self.setCentralWidget(self._stack)
+
+        self._pdf_view = PDFView()
+        self._text_view = TextDocView()
+        self._stack.addWidget(self._pdf_view)
+        self._stack.addWidget(self._text_view)
+
+        self._controls = ControlBar()
+        self._controls.set_voices(tts.get_voices(), getattr(tts, "voice", None))
+        self.statusBar().addPermanentWidget(self._controls, stretch=1)
+
+        self._controls.play_clicked.connect(self._on_play)
+        self._controls.pause_clicked.connect(self._on_pause)
+        self._controls.stop_clicked.connect(self._on_stop)
+        self._controls.prev_page_clicked.connect(self._on_prev)
+        self._controls.next_page_clicked.connect(self._on_next)
+        self._controls.voice_changed.connect(self._on_voice)
+        self._controls.speed_changed.connect(self._on_speed)
+
+        self._poll = QTimer(self)
+        self._poll.setInterval(33)
+        self._poll.timeout.connect(self._on_poll)
+
+        self._create_menus()
+
+        if initial_path:
+            self.open_path(initial_path)
+
+    def _create_menus(self) -> None:
+        m = self.menuBar().addMenu("File")
+        a_open = m.addAction("Open…")
+        a_open.triggered.connect(self._menu_open)
+        a_settings = m.addAction("Settings…")
+        a_settings.triggered.connect(self._menu_settings)
+
+    def _menu_settings(self) -> None:
+        base = Path.cwd()
+        cfg_path = base / "config.toml"
+        example = base / "config.example.toml"
+        msg = (
+            f"Optional config file:\n{cfg_path}\n\n"
+            f"Copy from example:\n{example}\n\n"
+            "Open the project folder in your file manager?"
+        )
+        if QMessageBox.question(self, "Settings", msg) == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(base)))
+
+    def _menu_open(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open document",
+            str(Path.home()),
+            "Documents (*.pdf *.epub *.txt *.md);;All (*)",
+        )
+        if path:
+            self.open_path(path)
+
+    def open_path(self, path: str) -> None:
+        self._on_stop()
+        try:
+            if self._pdf is not None:
+                self._pdf.close()
+                self._pdf = None
+            doc, self._pdf = load_document(path)
+        except Exception as e:  # noqa: BLE001
+            logger.exception("open failed")
+            QMessageBox.critical(self, "Open failed", str(e))
+            return
+
+        self.session = ReadingSession(
+            doc,
+            self._pdf,
+            self.tts,
+            self.player,
+            layout_model=self.layout_model,
+            pdf_scale=self.cfg.display.pdf_scale,
+            layout_conf=self.cfg.layout.confidence,
+            layout_imgsz=self.cfg.layout.imgsz,
+        )
+
+        total = len(doc.pages)
+        self._controls.set_page_indicator(0, total)
+
+        if doc.doc_type == "pdf":
+            self._stack.setCurrentWidget(self._pdf_view)
+            try:
+                self.session.go_to_page(0)
+                p = self.session.current_page()
+                if p.image is not None:
+                    self._pdf_view.set_page_image(p.image)
+            except Exception as e:  # noqa: BLE001
+                logger.exception("page render")
+                QMessageBox.warning(self, "Page load", str(e))
+        else:
+            self._stack.setCurrentWidget(self._text_view)
+            self.session.go_to_page(0)
+            p = self.session.current_page()
+            text = p.raw_text or "\n\n".join(b.text for b in p.blocks)
+            self._text_view.set_document_text(text, p.blocks)
+
+        self._poll.start()
+
+    def _on_play(self) -> None:
+        if self.session:
+            self.session.play()
+
+    def _on_pause(self) -> None:
+        if self.session:
+            self.session.pause()
+
+    def _on_stop(self) -> None:
+        if self.session:
+            self.session.stop()
+
+    def _on_prev(self) -> None:
+        if not self.session:
+            return
+        self.session.pause()
+        self.session.prev_page()
+        self._refresh_page_view()
+
+    def _on_next(self) -> None:
+        if not self.session:
+            return
+        self.session.pause()
+        self.session.next_page()
+        self._refresh_page_view()
+
+    def _on_voice(self, v: str) -> None:
+        if self.session:
+            self.session.set_voice(v)
+
+    def _on_speed(self, s: float) -> None:
+        if self.session:
+            self.session.set_speed(s)
+
+    def _refresh_page_view(self) -> None:
+        if not self.session:
+            return
+        doc = self.session.document
+        self._controls.set_page_indicator(self.session.page_index, len(doc.pages))
+        if doc.doc_type == "pdf":
+            p = self.session.current_page()
+            if p.image is not None:
+                self._pdf_view.set_page_image(p.image)
+        else:
+            p = self.session.current_page()
+            text = p.raw_text or "\n\n".join(b.text for b in p.blocks)
+            self._text_view.set_document_text(text, p.blocks)
+
+    def _on_poll(self) -> None:
+        if not self.session:
+            return
+        doc = self.session.document
+        self._controls.set_page_indicator(self.session.page_index, len(doc.pages))
+        bbox = self.session.get_active_word_bbox()
+        block = self.session.get_active_block()
+        st = self.session.get_state()
+
+        if doc.doc_type == "pdf":
+            self._pdf_view.set_highlight_bbox(bbox)
+        else:
+            self._text_view.highlight_word_in_block(block, st.word_index)
+
+    def closeEvent(self, e) -> None:  # noqa: ANN001
+        self._poll.stop()
+        if self.session:
+            self.session.stop()
+        if self._pdf is not None:
+            try:
+                self._pdf.close()
+            except Exception:  # noqa: BLE001
+                pass
+        super().closeEvent(e)
+
+
+def create_tts(cfg: AppConfig):
+    if cfg.tts.engine == "openai":
+        from projectwhy.core.tts.openai_tts import OpenAITTS
+
+        return OpenAITTS(
+            api_key=cfg.tts.openai.api_key,
+            base_url=cfg.tts.openai.base_url,
+            model=cfg.tts.openai.model,
+            voice=cfg.tts.openai.voice,
+            response_format=cfg.tts.openai.format,
+        )
+    from projectwhy.core.tts.kokoro_tts import KokoroTTS
+
+    return KokoroTTS(
+        voice=cfg.tts.voice,
+        speed=cfg.tts.speed,
+        device=cfg.tts.device,
+    )
