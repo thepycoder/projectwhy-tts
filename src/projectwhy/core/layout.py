@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image
 
-from projectwhy.core.models import Block, BlockType, BBox
+from projectwhy.core.models import Block, BlockType, BBox, WordPosition
 from projectwhy.core.reading_order import sort_blocks_reading_order
 
 try:
@@ -118,6 +118,33 @@ def _sort_words_into_lines(words: list) -> list:
     return result
 
 
+_SOFT_HYPHEN_CONT = "\u00ad"
+
+
+def _rejoin_hyphenated(words: list) -> list:
+    """Merge word pairs marked with trailing soft hyphen (line-break split from PDF)."""
+    if not words:
+        return []
+    result: list = []
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if w.text.endswith(_SOFT_HYPHEN_CONT) and i + 1 < len(words):
+            nxt = words[i + 1]
+            merged_text = w.text.removesuffix(_SOFT_HYPHEN_CONT) + nxt.text
+            result.append(WordPosition(text=merged_text, bbox=nxt.bbox))
+            i += 2
+        else:
+            if w.text.endswith(_SOFT_HYPHEN_CONT):
+                result.append(
+                    WordPosition(text=w.text.removesuffix(_SOFT_HYPHEN_CONT), bbox=w.bbox)
+                )
+            else:
+                result.append(w)
+            i += 1
+    return result
+
+
 def assign_words_to_blocks(blocks: list[Block], words: list) -> None:
     """Mutate blocks: set words list and combined text."""
     for b in blocks:
@@ -152,7 +179,7 @@ def assign_words_to_blocks(blocks: list[Block], words: list) -> None:
             nearest.words.append(w)
 
     for b in blocks:
-        b.words = _sort_words_into_lines(b.words)
+        b.words = _rejoin_hyphenated(_sort_words_into_lines(b.words))
         b.text = " ".join(w.text for w in b.words).strip()
 
 
@@ -192,7 +219,7 @@ def layout_and_assign_words(
         ]
     blocks = sort_blocks_reading_order(blocks, float(page_w), float(page_h))
     if not any(b.text.strip() for b in blocks) and words:
-        words_sorted = _sort_words_into_lines(words)
+        words_sorted = _rejoin_hyphenated(_sort_words_into_lines(words))
         merged_text = " ".join(w.text for w in words_sorted)
         blocks = [
             Block(

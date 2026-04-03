@@ -7,6 +7,11 @@ from PIL import Image
 
 from projectwhy.core.models import BBox, WordPosition
 
+# pypdfium2 uses this as a placeholder where a PDF line-break splits a word (e.g. hyphenation).
+_PDF_LINE_BREAK_MARKER = "\ufffe"
+# Marks a word half that continues on the next line; stripped / merged in layout._rejoin_hyphenated.
+_SOFT_HYPHEN_CONT = "\u00ad"
+
 
 def open_pdf(path: str) -> pdfium.PdfDocument:
     return pdfium.PdfDocument(path)
@@ -49,7 +54,7 @@ def extract_words(page: pdfium.PdfPage, scale: float) -> tuple[Image.Image, list
     n = textpage.count_chars()
     current_chars: list[tuple[str, tuple[float, float, float, float]]] = []
 
-    def flush_word() -> WordPosition | None:
+    def flush_word(*, line_break: bool = False) -> WordPosition | None:
         if not current_chars:
             return None
         texts = [c[0] for c in current_chars]
@@ -58,6 +63,8 @@ def extract_words(page: pdfium.PdfPage, scale: float) -> tuple[Image.Image, list
         if not word_text:
             current_chars.clear()
             return None
+        if line_break:
+            word_text += _SOFT_HYPHEN_CONT
         x1 = min(b[0] for b in boxes)
         y1 = min(b[1] for b in boxes)
         x2 = max(b[2] for b in boxes)
@@ -73,6 +80,12 @@ def extract_words(page: pdfium.PdfPage, scale: float) -> tuple[Image.Image, list
 
         if ch.isspace():
             w = flush_word()
+            if w is not None:
+                words.append(w)
+            continue
+
+        if ch == _PDF_LINE_BREAK_MARKER:
+            w = flush_word(line_break=True)
             if w is not None:
                 words.append(w)
             continue
