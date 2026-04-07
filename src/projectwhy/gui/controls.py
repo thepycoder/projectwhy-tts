@@ -9,9 +9,10 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QPushButton,
-    QSlider,
     QWidget,
 )
+
+from projectwhy.core.playback_speed import PLAYBACK_SPEED_CHOICES, clamp_playback_speed
 
 
 class ControlBar(QWidget):
@@ -43,10 +44,10 @@ class ControlBar(QWidget):
         self.btn_prev_block = QPushButton("Prev block")
         self.btn_next_block = QPushButton("Next block")
         self.voice = QComboBox()
-        self.speed = QSlider(Qt.Orientation.Horizontal)
-        self.speed.setRange(50, 200)
-        self.speed.setValue(100)
-        self.speed_label = QLabel("Speed 1.00x")
+        self.speed = QComboBox()
+        for sp in PLAYBACK_SPEED_CHOICES:
+            self.speed.addItem(f"{sp:.2f}x", sp)
+        self.speed.setCurrentIndex(PLAYBACK_SPEED_CHOICES.index(1.0))
 
         lay.addWidget(self.btn_play)
         lay.addWidget(self.btn_pause)
@@ -59,8 +60,8 @@ class ControlBar(QWidget):
         lay.addWidget(self.btn_next_block)
         lay.addWidget(QLabel("Voice"))
         lay.addWidget(self.voice, stretch=1)
-        lay.addWidget(self.speed_label)
-        lay.addWidget(self.speed, stretch=1)
+        lay.addWidget(QLabel("Speed"))
+        lay.addWidget(self.speed)
 
         self.btn_play.clicked.connect(self.play_clicked.emit)
         self.btn_pause.clicked.connect(self.pause_clicked.emit)
@@ -71,21 +72,18 @@ class ControlBar(QWidget):
         self.btn_prev_block.clicked.connect(self.prev_block_clicked.emit)
         self.btn_next_block.clicked.connect(self.next_block_clicked.emit)
         self.voice.currentTextChanged.connect(self.voice_changed.emit)
-        self.speed.valueChanged.connect(self._on_speed)
+        self.speed.currentIndexChanged.connect(self._on_speed_index)
 
-    def _on_speed(self, v: int) -> None:
-        s = v / 100.0
-        self.speed_label.setText(f"Speed {s:.2f}x")
+    def _on_speed_index(self, _idx: int) -> None:
+        s = float(self.speed.currentData())
         self.speed_changed.emit(s)
 
     def set_playback_speed(self, s: float) -> None:
-        v = int(round(float(s) * 100))
-        v = max(self.speed.minimum(), min(self.speed.maximum(), v))
+        c = clamp_playback_speed(s)
+        idx = PLAYBACK_SPEED_CHOICES.index(c)
         self.speed.blockSignals(True)
-        self.speed.setValue(v)
+        self.speed.setCurrentIndex(idx)
         self.speed.blockSignals(False)
-        s2 = v / 100.0
-        self.speed_label.setText(f"Speed {s2:.2f}x")
 
     def eventFilter(self, obj: QObject | None, event: QEvent | None) -> bool:
         if obj is self.page_edit and event is not None and event.type() == QEvent.Type.FocusOut:

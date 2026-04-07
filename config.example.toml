@@ -29,9 +29,9 @@ enable_mkldnn = false
 pdf_scale = 2.0
 highlight_color = [255, 200, 0, 128]
 
-# Playback: skip-back history, prefetch depth, and Rubber Band tempo (also in Settings…)
+# Playback: skip-back history, prefetch depth, and tempo (also in Settings…)
 [reading]
 history_length = 20
 prefetch_lookahead = 3
-# 1.0 = natural; requires ``rubberband`` CLI on PATH when not 1.0
+# 0.5–2.0 in 0.25 steps; WSOLA pitch-preserving time stretch when not 1.0
 playback_speed = 1.0

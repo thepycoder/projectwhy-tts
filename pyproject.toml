@@ -20,7 +20,7 @@ dependencies = [
     "huggingface-hub>=0.20",
     "ruff>=0.15.9",
     "tomli-w>=1.2.0",
-    "pyrubberband>=0.4.0",
+    "pytsmod>=0.3.8",
 ]
 
 [project.optional-dependencies]

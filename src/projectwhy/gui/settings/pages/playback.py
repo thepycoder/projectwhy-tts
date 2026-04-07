@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtWidgets import (
-    QDoubleSpinBox,
+    QComboBox,
     QFormLayout,
     QGroupBox,
     QLabel,
@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 )
 
 from projectwhy.config import AppConfig
+from projectwhy.core.playback_speed import PLAYBACK_SPEED_CHOICES, clamp_playback_speed
 
 
 class PlaybackSettingsPage:
@@ -47,13 +48,12 @@ class PlaybackSettingsPage:
         )
         form.addRow("Prefetch queue depth:", self._lookahead)
 
-        self._playback_speed = QDoubleSpinBox()
-        self._playback_speed.setRange(0.5, 3.0)
-        self._playback_speed.setDecimals(2)
-        self._playback_speed.setSingleStep(0.05)
+        self._playback_speed = QComboBox()
+        for sp in PLAYBACK_SPEED_CHOICES:
+            self._playback_speed.addItem(f"{sp:.2f}x", sp)
         self._playback_speed.setToolTip(
-            "Tempo multiplier for spoken audio with pitch preserved (Rubber Band). "
-            "Requires the rubberband program on PATH when not 1.0."
+            "Tempo multiplier for spoken audio (pitch preserved via WSOLA). "
+            "Steps from 0.5x to 2x in 0.25 increments."
         )
         form.addRow("Playback speed:", self._playback_speed)
 
@@ -69,10 +69,11 @@ class PlaybackSettingsPage:
     def load_from_config(self, cfg: AppConfig) -> None:
         self._history.setValue(cfg.reading.history_length)
         self._lookahead.setValue(cfg.reading.prefetch_lookahead)
-        self._playback_speed.setValue(cfg.reading.playback_speed)
+        c = clamp_playback_speed(cfg.reading.playback_speed)
+        self._playback_speed.setCurrentIndex(PLAYBACK_SPEED_CHOICES.index(c))
 
     def apply_to_config(self, cfg: AppConfig) -> str | None:
         cfg.reading.history_length = self._history.value()
         cfg.reading.prefetch_lookahead = self._lookahead.value()
-        cfg.reading.playback_speed = float(self._playback_speed.value())
+        cfg.reading.playback_speed = float(self._playback_speed.currentData())
         return None

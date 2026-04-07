@@ -12,6 +12,8 @@ except ModuleNotFoundError:  # pragma: no cover
 
 import tomli_w
 
+from projectwhy.core.playback_speed import clamp_playback_speed
+
 
 @dataclass
 class OpenAIConfig:
@@ -95,7 +97,7 @@ def _config_from_toml_dict(data: dict) -> AppConfig:
         reading=ReadingConfig(
             history_length=reading["history_length"],
             prefetch_lookahead=reading["prefetch_lookahead"],
-            playback_speed=reading["playback_speed"],
+            playback_speed=clamp_playback_speed(reading["playback_speed"]),
         ),
     )
 

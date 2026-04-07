@@ -289,7 +289,7 @@ class ReadingSession:
     def _prepare_playback_audio(
         self, job: BlockJob
     ) -> tuple[np.ndarray, int, list[WordTimestamp] | None]:
-        """Rubber Band time-stretch and timestamps aligned to the played buffer."""
+        """WSOLA time-stretch and timestamps aligned to the played buffer."""
         tr = job.tts_result
         if tr is None or tr.audio is None or len(tr.audio) == 0:
             return np.array([], dtype=np.float32), 24000, None
