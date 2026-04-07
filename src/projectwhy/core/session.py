@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 from typing import Any
 
 import pypdfium2 as pdfium
@@ -11,7 +12,7 @@ import pypdfium2 as pdfium
 from projectwhy.core.document import ensure_pdf_page_loaded
 from projectwhy.core.models import BBox, Block, BlockType, Document, Page, ReadingState, WordPosition, WordTimestamp
 from projectwhy.core.player import AudioPlayer
-from projectwhy.core.prefetch import Prefetcher
+from projectwhy.core.prefetch import BlockJob, Prefetcher
 from projectwhy.core.tts.base import TTSEngine
 
 
@@ -122,6 +123,8 @@ class ReadingSession:
         *,
         layout_model: Any,
         pdf_scale: float = 2.0,
+        history_length: int = 20,
+        prefetch_lookahead: int = 3,
     ) -> None:
         self.document = document
         self.pdf = pdf
@@ -129,6 +132,7 @@ class ReadingSession:
         self.player = player
         self.layout_model = layout_model
         self.pdf_scale = pdf_scale
+        self._prefetch_lookahead = prefetch_lookahead
 
         self.page_index = 0
         self.block_index = 0
@@ -141,6 +145,11 @@ class ReadingSession:
         self._resume_event.set()
         self._worker: threading.Thread | None = None
         self.prefetcher: Prefetcher | None = None
+
+        self._history: deque[BlockJob] = deque(maxlen=history_length)
+        self._replay_queue: deque[BlockJob] = deque()
+        self._current_job: BlockJob | None = None
+        self._skip_current = False
 
         self._current_timestamps: list[WordTimestamp] | None = None
         self._current_alignment: list[int] | None = None
@@ -272,22 +281,34 @@ class ReadingSession:
             self._resume_event.wait(timeout=0.2)
         return not self._stop.is_set()
 
-    def _playback_loop(self) -> None:
+    def _take_next_job(self) -> BlockJob | None:
+        """Get the next job from the replay queue (priority) or prefetcher."""
+        if self._replay_queue:
+            return self._replay_queue.popleft()
         prefetcher = self.prefetcher
         if prefetcher is None:
+            return None
+        job = prefetcher.take_next()
+        if job is None and self._replay_queue:
+            return self._replay_queue.popleft()
+        return job
+
+    def _playback_loop(self) -> None:
+        if self.prefetcher is None:
             return
 
         while not self._stop.is_set():
             if not self._wait_if_paused():
                 break
 
-            job = prefetcher.take_next()
+            job = self._take_next_job()
             if job is None:
                 break
 
             self.page_index = job.page_index
             self.block_index = job.block_index
             self._current_block = job.block
+            self._current_job = job
             self._current_timestamps = (
                 job.tts_result.word_timestamps if job.tts_result else None
             )
@@ -299,6 +320,7 @@ class ReadingSession:
             if not self._wait_if_paused():
                 break
 
+            self._skip_current = False
             self._utterance_done.clear()
             if job.tts_result and job.tts_result.audio is not None and len(job.tts_result.audio) > 0:
                 self.player.play(
@@ -310,6 +332,9 @@ class ReadingSession:
             else:
                 self._on_utterance_done()
 
+            if not self._skip_current:
+                self._history.append(job)
+
             if self._stop.is_set():
                 break
 
@@ -317,6 +342,7 @@ class ReadingSession:
 
         self.player.stop()
         self._current_block = None
+        self._current_job = None
         self._current_timestamps = None
         self._current_alignment = None
 
@@ -331,6 +357,10 @@ class ReadingSession:
         self._stop.clear()
         self._paused = False
         self._resume_event.set()
+        self._history.clear()
+        self._replay_queue.clear()
+        self._current_job = None
+        self._skip_current = False
         self.prefetcher = Prefetcher(
             self.document,
             self.pdf,
@@ -341,6 +371,8 @@ class ReadingSession:
             build_alignment=self._build_alignment,
             page_lock=self._page_lock,
             tts_lock=self._tts_lock,
+            lookahead=self._prefetch_lookahead,
+            should_yield=lambda: bool(self._replay_queue),
         )
         self.prefetcher.start(self.page_index, self.block_index)
         self._worker = threading.Thread(
@@ -370,10 +402,52 @@ class ReadingSession:
             self._worker.join(timeout=2.0)
         self._worker = None
         self._stop.clear()
+        self._replay_queue.clear()
+        self._current_job = None
+        self._skip_current = False
 
-    def skip_block(self) -> None:
+    def skip_forward(self) -> None:
+        """Skip current block; the loop advances to the next (already prefetched) block."""
         self.player.stop()
         self._utterance_done.set()
+
+    def skip_backward(self) -> bool:
+        """Jump back to the previously played block using cached audio.
+
+        Returns True if history was available, False otherwise.
+        """
+        if not self._history:
+            return False
+
+        prev_job = self._history.pop()
+        current = self._current_job
+
+        self._skip_current = True
+
+        if current is not None:
+            self._replay_queue.appendleft(current)
+        self._replay_queue.appendleft(prev_job)
+
+        self.player.stop()
+        self._utterance_done.set()
+
+        if self.prefetcher:
+            self.prefetcher.wake()
+
+        return True
+
+    @property
+    def is_active(self) -> bool:
+        """True when the playback worker is alive (playing or paused mid-playback)."""
+        return self._worker is not None and self._worker.is_alive()
+
+    def set_playback_settings(self, history_length: int, prefetch_lookahead: int) -> None:
+        """Update history size and prefetch depth; used when settings change at runtime."""
+        self._prefetch_lookahead = prefetch_lookahead
+        kept = list(self._history)
+        if len(kept) > history_length:
+            kept = kept[-history_length:]
+        self._history = deque(kept, maxlen=history_length)
 
     def set_voice(self, voice: str) -> None:
         if hasattr(self.tts, "voice"):
@@ -386,9 +460,7 @@ class ReadingSession:
     def get_state(self) -> ReadingState:
         pos = self.player.get_position_sec()
         wi = self._word_index_for_position(pos)
-        playing = not self._paused and (
-            self.player.is_playing() or (self._worker is not None and self._worker.is_alive())
-        )
+        playing = not self._paused and (self.player.is_playing() or self.is_active)
         return ReadingState(
             page_index=self.page_index,
             block_index=self.block_index,

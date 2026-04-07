@@ -56,6 +56,7 @@ class Prefetcher:
         page_lock: threading.Lock,
         tts_lock: threading.Lock,
         lookahead: int = 3,
+        should_yield: Callable[[], bool] | None = None,
     ) -> None:
         self._document = document
         self._pdf = pdf
@@ -67,6 +68,7 @@ class Prefetcher:
         self._page_lock = page_lock
         self._tts_lock = tts_lock
         self._lookahead = lookahead
+        self._should_yield = should_yield
 
         self._jobs: list[BlockJob] = []
         self._cond = threading.Condition()
@@ -101,10 +103,12 @@ class Prefetcher:
             self._exhausted = False
 
     def take_next(self) -> BlockJob | None:
-        """Block until the next job is READY.  Returns *None* at end-of-document or on cancel."""
+        """Block until the next job is READY.  Returns *None* at end-of-document, cancel, or yield."""
         with self._cond:
             while True:
                 if self._cancel.is_set():
+                    return None
+                if self._should_yield and self._should_yield():
                     return None
 
                 for job in self._jobs:
@@ -112,7 +116,6 @@ class Prefetcher:
                         for prev in self._jobs:
                             if prev.status == JobStatus.PLAYING:
                                 prev.status = JobStatus.DONE
-                                prev.tts_result = None
                         job.status = JobStatus.PLAYING
                         self._cond.notify_all()
                         return job
@@ -121,6 +124,11 @@ class Prefetcher:
                     return None
 
                 self._cond.wait(timeout=0.2)
+
+    def wake(self) -> None:
+        """Wake take_next() so it can re-check external conditions."""
+        with self._cond:
+            self._cond.notify_all()
 
     def peek(self) -> list[BlockJob]:
         """Snapshot of the pipeline (safe to call from any thread)."""

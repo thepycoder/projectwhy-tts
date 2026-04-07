@@ -192,16 +192,23 @@ class MainWindow(QMainWindow):
     def _on_prev_block(self) -> None:
         if not self.session:
             return
-        self.session.stop()
-        self.session.prev_block()
-        self._refresh_page_view()
+        if self.session.is_active:
+            if not self.session.skip_backward():
+                self.session.stop()
+                self.session.prev_block()
+                self._refresh_page_view()
+        else:
+            self.session.prev_block()
+            self._refresh_page_view()
 
     def _on_next_block(self) -> None:
         if not self.session:
             return
-        self.session.stop()
-        self.session.next_block()
-        self._refresh_page_view()
+        if self.session.is_active:
+            self.session.skip_forward()
+        else:
+            self.session.next_block()
+            self._refresh_page_view()
 
     def _on_voice(self, v: str) -> None:
         if self.session:
