@@ -28,7 +28,7 @@ class BlockType(StrEnum):
     ABSTRACT = "abstract"
     TABLE_OF_CONTENTS = "table_of_contents"
     REFERENCES = "references"
-    FOOTNOTES = "footnotes"
+    FOOTNOTE = "footnote"
     HEADER = "header"
     FOOTER = "footer"
     ALGORITHM = "algorithm"

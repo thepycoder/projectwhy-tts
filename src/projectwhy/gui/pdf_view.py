@@ -52,10 +52,10 @@ class PDFView(QGraphicsView):
         self._resize_timer.setInterval(150)
         self._resize_timer.timeout.connect(self._render_to_viewport)
 
-    def set_highlight_color(self, rgba: tuple[int, int, int, int]) -> None:
+    def set_highlight_color(self, rgba: list[int] | tuple[int, int, int, int]) -> None:
         """RGBA fill for word highlight; pen is slightly darker/orange."""
-        self._highlight_rgba = rgba
-        r, g, b, a = rgba
+        self._highlight_rgba = tuple(rgba)
+        r, g, b, a = self._highlight_rgba
         self._pen_rgba = (max(0, r - 40), max(0, g - 60), min(255, b + 40), min(255, a + 80))
         if self._highlight is not None:
             self._highlight.setBrush(QColor(*self._highlight_rgba))

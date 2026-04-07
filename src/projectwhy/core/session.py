@@ -55,7 +55,7 @@ BLOCK_CONFIG: dict[BlockType, dict[str, Any]] = {
         "pause_after": 0.0,
         "keep_if_no_words": False,
     },
-    BlockType.FOOTNOTES: {
+    BlockType.FOOTNOTE: {
         "speak": True,
         "pause_after": 0.3,
         "keep_if_no_words": False,

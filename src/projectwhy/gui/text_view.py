@@ -16,7 +16,7 @@ class TextDocView(QTextBrowser):
         self._blocks: list[Block] = []
         self._plain: str = ""
 
-    def set_highlight_color(self, rgba: tuple[int, int, int, int]) -> None:
+    def set_highlight_color(self, rgba: list[int] | tuple[int, int, int, int]) -> None:
         self._fmt.setBackground(QColor(*rgba))
 
     def set_document_text(self, text: str, blocks: list[Block]) -> None:

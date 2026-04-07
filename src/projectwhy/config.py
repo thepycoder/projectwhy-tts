@@ -1,8 +1,8 @@
-"""Load application config from TOML with defaults."""
+"""Application config: dataclass schema ↔ TOML (file must define every key)."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 try:
@@ -10,95 +10,111 @@ try:
 except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore
 
+import tomli_w
+
 
 @dataclass
 class OpenAIConfig:
-    api_key: str = ""
-    base_url: str = "https://api.openai.com/v1"
-    model: str = "tts-1"
-    voice: str = "alloy"
-    format: str = "wav"
+    api_key: str
+    base_url: str
+    model: str
+    voice: str
+    format: str
 
 
 @dataclass
 class TTSConfig:
-    engine: str = "kokoro"
-    voice: str = "af_heart"
-    speed: float = 1.0
-    device: str | None = "cpu"
-    openai: OpenAIConfig = field(default_factory=OpenAIConfig)
+    engine: str
+    voice: str
+    speed: float
+    device: str
+    openai: OpenAIConfig
 
 
 @dataclass
 class LayoutConfig:
-    model_name: str = "PP-DocLayout-L"
-    model_dir: str = ""
-    confidence: float = 0.25
-    device: str | None = None
-    layout_nms: bool = True
-    enable_mkldnn: bool = False
+    model_name: str
+    model_dir: str
+    confidence: float
+    device: str
+    layout_nms: bool
+    enable_mkldnn: bool
 
 
 @dataclass
 class DisplayConfig:
-    pdf_scale: float = 4.0
-    highlight_color: tuple[int, int, int, int] = (255, 200, 0, 128)
+    pdf_scale: float
+    highlight_color: list[int]
+
+
+@dataclass
+class ReadingConfig:
+    history_length: int
+    prefetch_lookahead: int
 
 
 @dataclass
 class AppConfig:
-    tts: TTSConfig = field(default_factory=TTSConfig)
-    layout: LayoutConfig = field(default_factory=LayoutConfig)
-    display: DisplayConfig = field(default_factory=DisplayConfig)
+    tts: TTSConfig
+    layout: LayoutConfig
+    display: DisplayConfig
+    reading: ReadingConfig
 
 
-def load_config(path: str | Path | None = None) -> AppConfig:
-    cfg = AppConfig()
-    if path is None:
-        return cfg
+def _config_from_toml_dict(data: dict) -> AppConfig:
+    t = data["tts"]
+    o = t["openai"]
+    layout = data["layout"]
+    display = data["display"]
+    reading = data["reading"]
+    return AppConfig(
+        tts=TTSConfig(
+            engine=t["engine"],
+            voice=t["voice"],
+            speed=t["speed"],
+            device=t["device"],
+            openai=OpenAIConfig(
+                api_key=o["api_key"],
+                base_url=o["base_url"],
+                model=o["model"],
+                voice=o["voice"],
+                format=o["format"],
+            ),
+        ),
+        layout=LayoutConfig(
+            model_name=layout["model_name"],
+            model_dir=layout["model_dir"],
+            confidence=layout["confidence"],
+            device=layout["device"],
+            layout_nms=layout["layout_nms"],
+            enable_mkldnn=layout["enable_mkldnn"],
+        ),
+        display=DisplayConfig(
+            pdf_scale=display["pdf_scale"],
+            highlight_color=display["highlight_color"],
+        ),
+        reading=ReadingConfig(
+            history_length=reading["history_length"],
+            prefetch_lookahead=reading["prefetch_lookahead"],
+        ),
+    )
 
+
+def load(path: str | Path) -> AppConfig:
+    """Read TOML from *path* and build ``AppConfig`` (every key must be present)."""
     p = Path(path)
-    if not p.exists():
-        return cfg
-
     data = tomllib.loads(p.read_text(encoding="utf-8"))
+    return _config_from_toml_dict(data)
 
-    if "tts" in data:
-        t = data["tts"]
-        cfg.tts.engine = str(t.get("engine", cfg.tts.engine))
-        cfg.tts.voice = str(t.get("voice", cfg.tts.voice))
-        cfg.tts.speed = float(t.get("speed", cfg.tts.speed))
-        dev = t.get("device", cfg.tts.device)
-        cfg.tts.device = None if dev in ("", "none", None) else str(dev)
 
-    if "tts" in data and isinstance(data["tts"], dict) and "openai" in data["tts"]:
-        o = data["tts"]["openai"]
-        cfg.tts.openai.api_key = str(o.get("api_key", ""))
-        cfg.tts.openai.base_url = str(o.get("base_url", cfg.tts.openai.base_url))
-        cfg.tts.openai.model = str(o.get("model", cfg.tts.openai.model))
-        cfg.tts.openai.voice = str(o.get("voice", cfg.tts.openai.voice))
-        cfg.tts.openai.format = str(o.get("format", cfg.tts.openai.format))
+def save(path: str | Path, cfg: AppConfig) -> None:
+    """Write *cfg* to TOML at *path* (overwrites)."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("wb") as f:
+        tomli_w.dump(asdict(cfg), f)
 
-    if "layout" in data:
-        layout_data = data["layout"]
-        cfg.layout.model_name = str(layout_data.get("model_name", cfg.layout.model_name))
-        cfg.layout.model_dir = str(layout_data.get("model_dir", "") or "")
-        cfg.layout.confidence = float(layout_data.get("confidence", cfg.layout.confidence))
-        dev = layout_data.get("device", cfg.layout.device)
-        if dev in ("", "none", None):
-            cfg.layout.device = None
-        else:
-            cfg.layout.device = str(dev)
-        cfg.layout.layout_nms = bool(layout_data.get("layout_nms", cfg.layout.layout_nms))
-        cfg.layout.enable_mkldnn = bool(
-            layout_data.get("enable_mkldnn", cfg.layout.enable_mkldnn),
-        )
 
-    if "display" in data:
-        d = data["display"]
-        cfg.display.pdf_scale = float(d.get("pdf_scale", cfg.display.pdf_scale))
-        hc = d.get("highlight_color")
-        if isinstance(hc, list) and len(hc) == 4:
-            cfg.display.highlight_color = tuple(int(x) for x in hc)  # type: ignore[assignment]
-
-    return cfg
+# Backward-compatible names
+load_config = load
+save_config = save

@@ -1,0 +1,65 @@
+"""Playback / pipeline settings."""
+
+from __future__ import annotations
+
+from PyQt6.QtWidgets import (
+    QFormLayout,
+    QGroupBox,
+    QLabel,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+
+from projectwhy.config import AppConfig
+
+
+class PlaybackSettingsPage:
+    def __init__(self) -> None:
+        self._root = QWidget()
+        outer = QVBoxLayout(self._root)
+        outer.setContentsMargins(8, 8, 8, 8)
+
+        intro = QLabel(
+            "Controls how far you can skip backward with cached audio, and how many "
+            "blocks are synthesized ahead of playback."
+        )
+        intro.setWordWrap(True)
+        outer.addWidget(intro)
+
+        group = QGroupBox("Pipeline")
+        form = QFormLayout(group)
+
+        self._history = QSpinBox()
+        self._history.setRange(1, 500)
+        self._history.setToolTip(
+            "Maximum number of recently played blocks kept in memory for Prev block "
+            "(reuses TTS audio without re-synthesis)."
+        )
+        form.addRow("Block history size:", self._history)
+
+        self._lookahead = QSpinBox()
+        self._lookahead.setRange(1, 20)
+        self._lookahead.setToolTip(
+            "How many upcoming speakable blocks may be waiting in the prefetch queue "
+            "(higher = smoother skipping forward, more RAM and TTS work)."
+        )
+        form.addRow("Prefetch queue depth:", self._lookahead)
+
+        outer.addWidget(group)
+        outer.addStretch(1)
+
+    def page_title(self) -> str:
+        return "Playback"
+
+    def widget(self) -> QWidget:
+        return self._root
+
+    def load_from_config(self, cfg: AppConfig) -> None:
+        self._history.setValue(cfg.reading.history_length)
+        self._lookahead.setValue(cfg.reading.prefetch_lookahead)
+
+    def apply_to_config(self, cfg: AppConfig) -> str | None:
+        cfg.reading.history_length = self._history.value()
+        cfg.reading.prefetch_lookahead = self._lookahead.value()
+        return None

@@ -13,7 +13,7 @@ os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
 from PyQt6.QtWidgets import QApplication
 
-from projectwhy.config import load_config
+from projectwhy.config import load
 from projectwhy.core.layout import load_layout_model
 from projectwhy.gui.app import MainWindow, create_tts
 
@@ -33,23 +33,37 @@ def main() -> None:
     cfg_path = args.config
     if cfg_path is None:
         cwd = Path.cwd() / "config.toml"
-        if cwd.exists():
+        if cwd.is_file():
             cfg_path = cwd
 
-    cfg = load_config(cfg_path)
+    if cfg_path is None or not cfg_path.is_file():
+        print(
+            "No config file found. Copy config.example.toml to config.toml "
+            "or pass --config PATH.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    cfg = load(cfg_path)
     tts = create_tts(cfg)
 
     layout_model = load_layout_model(
         model_name=cfg.layout.model_name,
         model_dir=cfg.layout.model_dir or None,
         threshold=cfg.layout.confidence,
-        device=cfg.layout.device,
+        device=cfg.layout.device or None,
         layout_nms=cfg.layout.layout_nms,
         enable_mkldnn=cfg.layout.enable_mkldnn,
     )
 
     app = QApplication(sys.argv)
-    win = MainWindow(cfg, tts, layout_model, initial_path=args.path)
+    win = MainWindow(
+        cfg,
+        tts,
+        layout_model,
+        initial_path=args.path,
+        config_path=cfg_path,
+    )
     win.resize(1200, 900)
     win.show()
     ret = app.exec()

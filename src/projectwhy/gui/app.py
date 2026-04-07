@@ -5,17 +5,23 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer, QUrl
-from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import QFileDialog, QMainWindow, QMessageBox, QStackedWidget
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtWidgets import (
+    QDialog,
+    QFileDialog,
+    QMainWindow,
+    QMessageBox,
+    QStackedWidget,
+)
 
-from projectwhy.config import AppConfig
+from projectwhy.config import AppConfig, save
 from projectwhy.core.document import load_document
 from projectwhy.core.player import AudioPlayer
 from projectwhy.core.session import ReadingSession
 from projectwhy.core.tts.base import TTSEngine
 from projectwhy.gui.controls import ControlBar
 from projectwhy.gui.inspector.dock import InspectorDock
+from projectwhy.gui.settings import SettingsDialog
 from projectwhy.gui.pdf_view import PDFView
 from projectwhy.gui.text_view import TextDocView
 
@@ -29,11 +35,13 @@ class MainWindow(QMainWindow):
         tts: TTSEngine,
         layout_model,
         initial_path: str | None = None,
+        config_path: Path | None = None,
     ) -> None:
         super().__init__()
         self.cfg = cfg
         self.tts = tts
         self.layout_model = layout_model
+        self._config_path = config_path
         self.player = AudioPlayer()
         self.session: ReadingSession | None = None
         self._pdf = None
@@ -90,16 +98,21 @@ class MainWindow(QMainWindow):
         self._inspector.visibilityChanged.connect(self._inspector_action.setChecked)
 
     def _menu_settings(self) -> None:
-        base = Path.cwd()
-        cfg_path = base / "config.toml"
-        example = base / "config.example.toml"
-        msg = (
-            f"Optional config file:\n{cfg_path}\n\n"
-            f"Copy from example:\n{example}\n\n"
-            "Open the project folder in your file manager?"
-        )
-        if QMessageBox.question(self, "Settings", msg) == QMessageBox.StandardButton.Yes:
-            QDesktopServices.openUrl(QUrl.fromLocalFile(str(base)))
+        dlg = SettingsDialog(self.cfg, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        path = self._config_path or Path.cwd() / "config.toml"
+        try:
+            save(path, self.cfg)
+        except OSError as e:
+            logger.exception("save config")
+            QMessageBox.warning(self, "Settings", f"Could not save config:\n{e}")
+            return
+        if self.session:
+            self.session.set_playback_settings(
+                self.cfg.reading.history_length,
+                self.cfg.reading.prefetch_lookahead,
+            )
 
     def _menu_open(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -131,6 +144,8 @@ class MainWindow(QMainWindow):
             self.player,
             layout_model=self.layout_model,
             pdf_scale=self.cfg.display.pdf_scale,
+            history_length=self.cfg.reading.history_length,
+            prefetch_lookahead=self.cfg.reading.prefetch_lookahead,
         )
         self._last_poll_page = -1
         self._inspector.reset()
@@ -303,5 +318,5 @@ def create_tts(cfg: AppConfig):
     return KokoroTTS(
         voice=cfg.tts.voice,
         speed=cfg.tts.speed,
-        device=cfg.tts.device,
+        device=cfg.tts.device or None,
     )

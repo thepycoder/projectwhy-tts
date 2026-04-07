@@ -17,7 +17,7 @@ BLOCK_COLORS: dict[BlockType, tuple[int, int, int]] = {
     BlockType.ABSTRACT: (50, 170, 90),
     BlockType.ASIDE_TEXT: (55, 145, 85),
     BlockType.ALGORITHM: (30, 140, 100),
-    BlockType.FOOTNOTES: (45, 150, 75),
+    BlockType.FOOTNOTE: (45, 150, 75),
     BlockType.FIGURE: (150, 70, 200),
     BlockType.CHART: (145, 65, 195),
     BlockType.IMAGE: (170, 90, 210),

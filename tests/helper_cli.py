@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pypdfium2 as pdfium
 
-from projectwhy.config import load_config
+from projectwhy.config import load
 from projectwhy.core.layout import layout_and_assign_words, load_layout_model
 from projectwhy.core.models import Block, BlockType
 from projectwhy.core.pdf import extract_words, open_pdf
@@ -20,6 +20,14 @@ from projectwhy.core.pdf import extract_words, open_pdf
 from tests.helpers import find_block_containing
 
 FIXTURES_PDF_DIR = Path(__file__).resolve().parent / "fixtures" / "pdfs"
+FIXTURE_CONFIG = Path(__file__).resolve().parent / "fixtures" / "config.toml"
+
+
+def _resolved_config_path() -> Path:
+    cwd = Path.cwd() / "config.toml"
+    if cwd.is_file():
+        return cwd
+    return FIXTURE_CONFIG
 _PREVIEW_LEN = 72
 
 
@@ -76,12 +84,12 @@ def _preview(text: str) -> str:
 
 
 def cmd_inspect(args: argparse.Namespace) -> int:
-    cfg = load_config()
+    cfg = load(_resolved_config_path())
     model = load_layout_model(
         model_name=cfg.layout.model_name,
         model_dir=cfg.layout.model_dir or None,
         threshold=cfg.layout.confidence,
-        device=cfg.layout.device,
+        device=cfg.layout.device or None,
         layout_nms=cfg.layout.layout_nms,
         enable_mkldnn=cfg.layout.enable_mkldnn,
     )
@@ -106,12 +114,12 @@ def cmd_extract_page(args: argparse.Namespace) -> int:
 
 
 def cmd_add(args: argparse.Namespace) -> int:
-    cfg = load_config()
+    cfg = load(_resolved_config_path())
     model = load_layout_model(
         model_name=cfg.layout.model_name,
         model_dir=cfg.layout.model_dir or None,
         threshold=cfg.layout.confidence,
-        device=cfg.layout.device,
+        device=cfg.layout.device or None,
         layout_nms=cfg.layout.layout_nms,
         enable_mkldnn=cfg.layout.enable_mkldnn,
     )

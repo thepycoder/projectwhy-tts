@@ -1,3 +1,6 @@
+# Required: every key below must be present (see dataclasses in projectwhy/config.py).
+# Copy to config.toml and edit; the app exits if no config file is found.
+
 [tts]
 engine = "kokoro"
 voice = "af_heart"
@@ -26,3 +29,8 @@ enable_mkldnn = false
 [display]
 pdf_scale = 2.0
 highlight_color = [255, 200, 0, 128]
+
+# Playback: skip-back history and TTS prefetch depth (also editable in Settings…)
+[reading]
+history_length = 20
+prefetch_lookahead = 3
