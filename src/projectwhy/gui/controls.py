@@ -16,7 +16,6 @@ from PyQt6.QtWidgets import (
 
 class ControlBar(QWidget):
     play_clicked = pyqtSignal()
-    stop_clicked = pyqtSignal()
     pause_clicked = pyqtSignal()
     prev_page_clicked = pyqtSignal()
     next_page_clicked = pyqtSignal()
@@ -32,7 +31,6 @@ class ControlBar(QWidget):
 
         self.btn_play = QPushButton("Play")
         self.btn_pause = QPushButton("Pause")
-        self.btn_stop = QPushButton("Stop")
         self.btn_prev = QPushButton("Prev page")
         self.btn_next = QPushButton("Next page")
         self.page_edit = QLineEdit()
@@ -52,7 +50,6 @@ class ControlBar(QWidget):
 
         lay.addWidget(self.btn_play)
         lay.addWidget(self.btn_pause)
-        lay.addWidget(self.btn_stop)
         lay.addWidget(self.btn_prev)
         lay.addWidget(self.btn_next)
         lay.addWidget(QLabel("Page"))
@@ -67,7 +64,6 @@ class ControlBar(QWidget):
 
         self.btn_play.clicked.connect(self.play_clicked.emit)
         self.btn_pause.clicked.connect(self.pause_clicked.emit)
-        self.btn_stop.clicked.connect(self.stop_clicked.emit)
         self.btn_prev.clicked.connect(self.prev_page_clicked.emit)
         self.btn_next.clicked.connect(self.next_page_clicked.emit)
         self.page_edit.returnPressed.connect(self._on_page_edit_return)

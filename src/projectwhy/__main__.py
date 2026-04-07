@@ -52,7 +52,10 @@ def main() -> None:
     win = MainWindow(cfg, tts, layout_model, initial_path=args.path)
     win.resize(1200, 900)
     win.show()
-    sys.exit(app.exec())
+    ret = app.exec()
+    # PaddlePaddle's C++ threads cause SIGABRT during normal interpreter shutdown;
+    # force-exit after Qt cleanup to avoid the crash.
+    os._exit(ret)
 
 
 if __name__ == "__main__":

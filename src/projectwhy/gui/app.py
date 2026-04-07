@@ -54,7 +54,6 @@ class MainWindow(QMainWindow):
 
         self._controls.play_clicked.connect(self._on_play)
         self._controls.pause_clicked.connect(self._on_pause)
-        self._controls.stop_clicked.connect(self._on_stop)
         self._controls.prev_page_clicked.connect(self._on_prev)
         self._controls.next_page_clicked.connect(self._on_next)
         self._controls.page_jump_requested.connect(self._on_page_jump)
@@ -113,7 +112,8 @@ class MainWindow(QMainWindow):
             self.open_path(path)
 
     def open_path(self, path: str) -> None:
-        self._on_stop()
+        if self.session:
+            self.session.stop()
         try:
             if self._pdf is not None:
                 self._pdf.close()
@@ -165,21 +165,17 @@ class MainWindow(QMainWindow):
         if self.session:
             self.session.pause()
 
-    def _on_stop(self) -> None:
-        if self.session:
-            self.session.stop()
-
     def _on_prev(self) -> None:
         if not self.session:
             return
-        self.session.pause()
+        self.session.stop()
         self.session.prev_page()
         self._refresh_page_view()
 
     def _on_next(self) -> None:
         if not self.session:
             return
-        self.session.pause()
+        self.session.stop()
         self.session.next_page()
         self._refresh_page_view()
 
@@ -189,21 +185,21 @@ class MainWindow(QMainWindow):
         doc = self.session.document
         if page_index < 0 or page_index >= len(doc.pages):
             return
-        self.session.pause()
+        self.session.stop()
         self.session.go_to_page(page_index)
         self._refresh_page_view()
 
     def _on_prev_block(self) -> None:
         if not self.session:
             return
-        self.session.pause()
+        self.session.stop()
         self.session.prev_block()
         self._refresh_page_view()
 
     def _on_next_block(self) -> None:
         if not self.session:
             return
-        self.session.pause()
+        self.session.stop()
         self.session.next_block()
         self._refresh_page_view()
 

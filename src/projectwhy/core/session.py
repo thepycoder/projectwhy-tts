@@ -136,6 +136,9 @@ class ReadingSession:
         self._tts_lock = threading.Lock()
         self._utterance_done = threading.Event()
         self._stop = threading.Event()
+        self._paused = False
+        self._resume_event = threading.Event()
+        self._resume_event.set()
         self._worker: threading.Thread | None = None
         self.prefetcher: Prefetcher | None = None
 
@@ -263,12 +266,21 @@ class ReadingSession:
     def _on_utterance_done(self) -> None:
         self._utterance_done.set()
 
+    def _wait_if_paused(self) -> bool:
+        """Block while paused. Returns False if stopped."""
+        while not self._resume_event.is_set() and not self._stop.is_set():
+            self._resume_event.wait(timeout=0.2)
+        return not self._stop.is_set()
+
     def _playback_loop(self) -> None:
         prefetcher = self.prefetcher
         if prefetcher is None:
             return
 
         while not self._stop.is_set():
+            if not self._wait_if_paused():
+                break
+
             job = prefetcher.take_next()
             if job is None:
                 break
@@ -282,6 +294,9 @@ class ReadingSession:
             self._current_alignment = job.alignment
 
             if self._stop.is_set():
+                break
+
+            if not self._wait_if_paused():
                 break
 
             self._utterance_done.clear()
@@ -306,9 +321,16 @@ class ReadingSession:
         self._current_alignment = None
 
     def play(self) -> None:
+        if self._paused:
+            self._paused = False
+            self._resume_event.set()
+            self.player.resume()
+            return
         if self._worker is not None and self._worker.is_alive():
             return
         self._stop.clear()
+        self._paused = False
+        self._resume_event.set()
         self.prefetcher = Prefetcher(
             self.document,
             self.pdf,
@@ -332,21 +354,18 @@ class ReadingSession:
             self.prefetcher = None
 
     def pause(self) -> None:
-        """Stop audio and background worker; keeps page/block cursor."""
-        self._stop.set()
-        self._stop_prefetcher()
-        self.player.stop()
-        self._utterance_done.set()
-        if self._worker is not None:
-            self._worker.join(timeout=2.0)
-        self._worker = None
-        self._stop.clear()
+        """Pause audio playback; worker and prefetcher stay alive for fast resume."""
+        self._paused = True
+        self._resume_event.clear()
+        self.player.pause()
 
     def stop(self) -> None:
-        self._stop.set()
-        self._stop_prefetcher()
         self.player.stop()
+        self._paused = False
+        self._resume_event.set()
+        self._stop.set()
         self._utterance_done.set()
+        self._stop_prefetcher()
         if self._worker is not None:
             self._worker.join(timeout=2.0)
         self._worker = None
@@ -367,7 +386,9 @@ class ReadingSession:
     def get_state(self) -> ReadingState:
         pos = self.player.get_position_sec()
         wi = self._word_index_for_position(pos)
-        playing = self.player.is_playing() or (self._worker is not None and self._worker.is_alive())
+        playing = not self._paused and (
+            self.player.is_playing() or (self._worker is not None and self._worker.is_alive())
+        )
         return ReadingState(
             page_index=self.page_index,
             block_index=self.block_index,
