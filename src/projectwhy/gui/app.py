@@ -58,6 +58,7 @@ class MainWindow(QMainWindow):
 
         self._controls = ControlBar()
         self._controls.set_voices(tts.get_voices(), getattr(tts, "voice", None))
+        self._controls.set_playback_speed(cfg.reading.playback_speed)
         self.statusBar().addPermanentWidget(self._controls, stretch=1)
 
         self._controls.play_clicked.connect(self._on_play)
@@ -112,7 +113,9 @@ class MainWindow(QMainWindow):
             self.session.set_playback_settings(
                 self.cfg.reading.history_length,
                 self.cfg.reading.prefetch_lookahead,
+                self.cfg.reading.playback_speed,
             )
+        self._controls.set_playback_speed(self.cfg.reading.playback_speed)
 
     def _menu_open(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -146,6 +149,7 @@ class MainWindow(QMainWindow):
             pdf_scale=self.cfg.display.pdf_scale,
             history_length=self.cfg.reading.history_length,
             prefetch_lookahead=self.cfg.reading.prefetch_lookahead,
+            playback_speed=self.cfg.reading.playback_speed,
         )
         self._last_poll_page = -1
         self._inspector.reset()
@@ -230,6 +234,7 @@ class MainWindow(QMainWindow):
             self.session.set_voice(v)
 
     def _on_speed(self, s: float) -> None:
+        self.cfg.reading.playback_speed = float(s)
         if self.session:
             self.session.set_speed(s)
 
@@ -317,6 +322,5 @@ def create_tts(cfg: AppConfig):
 
     return KokoroTTS(
         voice=cfg.tts.voice,
-        speed=cfg.tts.speed,
         device=cfg.tts.device or None,
     )

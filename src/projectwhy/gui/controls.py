@@ -78,6 +78,15 @@ class ControlBar(QWidget):
         self.speed_label.setText(f"Speed {s:.2f}x")
         self.speed_changed.emit(s)
 
+    def set_playback_speed(self, s: float) -> None:
+        v = int(round(float(s) * 100))
+        v = max(self.speed.minimum(), min(self.speed.maximum(), v))
+        self.speed.blockSignals(True)
+        self.speed.setValue(v)
+        self.speed.blockSignals(False)
+        s2 = v / 100.0
+        self.speed_label.setText(f"Speed {s2:.2f}x")
+
     def eventFilter(self, obj: QObject | None, event: QEvent | None) -> bool:
         if obj is self.page_edit and event is not None and event.type() == QEvent.Type.FocusOut:
             if self._page_total > 0:

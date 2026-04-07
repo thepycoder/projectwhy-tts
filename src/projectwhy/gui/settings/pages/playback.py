@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtWidgets import (
+    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QLabel,
@@ -46,6 +47,16 @@ class PlaybackSettingsPage:
         )
         form.addRow("Prefetch queue depth:", self._lookahead)
 
+        self._playback_speed = QDoubleSpinBox()
+        self._playback_speed.setRange(0.5, 3.0)
+        self._playback_speed.setDecimals(2)
+        self._playback_speed.setSingleStep(0.05)
+        self._playback_speed.setToolTip(
+            "Tempo multiplier for spoken audio with pitch preserved (Rubber Band). "
+            "Requires the rubberband program on PATH when not 1.0."
+        )
+        form.addRow("Playback speed:", self._playback_speed)
+
         outer.addWidget(group)
         outer.addStretch(1)
 
@@ -58,8 +69,10 @@ class PlaybackSettingsPage:
     def load_from_config(self, cfg: AppConfig) -> None:
         self._history.setValue(cfg.reading.history_length)
         self._lookahead.setValue(cfg.reading.prefetch_lookahead)
+        self._playback_speed.setValue(cfg.reading.playback_speed)
 
     def apply_to_config(self, cfg: AppConfig) -> str | None:
         cfg.reading.history_length = self._history.value()
         cfg.reading.prefetch_lookahead = self._lookahead.value()
+        cfg.reading.playback_speed = float(self._playback_speed.value())
         return None

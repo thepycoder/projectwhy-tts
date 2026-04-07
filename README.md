@@ -29,6 +29,7 @@ On some Linux CPU builds, Paddle oneDNN can fail; the example config sets `enabl
 
 - Python 3.11+
 - Audio device (speakers) for playback
+- [Rubber Band](https://breakfastquay.com/rubberband/) (`rubberband` on PATH) when using playback speed other than 1.0×
 - Optional: GPU for faster layout (`[layout] device = "gpu"`) and Kokoro TTS (CPU works for both)
 
 ## License

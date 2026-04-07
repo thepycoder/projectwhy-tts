@@ -25,20 +25,19 @@ class KokoroTTS:
     def __init__(
         self,
         voice: str = "af_heart",
-        speed: float = 1.0,
         device: str | None = None,
         repo_id: str = "hexgrad/Kokoro-82M",
         lang_code: str = "a",
     ):
         self.voice = voice
-        self.speed = speed
         self.pipeline = KPipeline(lang_code=lang_code, repo_id=repo_id, device=device)
 
     def synthesize(self, text: str) -> TTSResult:
         if not text.strip():
             return TTSResult(audio=np.array([], dtype=np.float32), sample_rate=24000, word_timestamps=[])
 
-        results = list(self.pipeline(text, voice=self.voice, speed=self.speed))
+        # Fixed 1.0× synthesis; playback tempo (with pitch preservation) is applied in the session.
+        results = list(self.pipeline(text, voice=self.voice, speed=1.0))
         audio_chunks: list[np.ndarray] = []
         word_timestamps: list[WordTimestamp] = []
         offset = 0.0

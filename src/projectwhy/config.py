@@ -26,7 +26,6 @@ class OpenAIConfig:
 class TTSConfig:
     engine: str
     voice: str
-    speed: float
     device: str
     openai: OpenAIConfig
 
@@ -51,6 +50,7 @@ class DisplayConfig:
 class ReadingConfig:
     history_length: int
     prefetch_lookahead: int
+    playback_speed: float
 
 
 @dataclass
@@ -71,7 +71,6 @@ def _config_from_toml_dict(data: dict) -> AppConfig:
         tts=TTSConfig(
             engine=t["engine"],
             voice=t["voice"],
-            speed=t["speed"],
             device=t["device"],
             openai=OpenAIConfig(
                 api_key=o["api_key"],
@@ -96,6 +95,7 @@ def _config_from_toml_dict(data: dict) -> AppConfig:
         reading=ReadingConfig(
             history_length=reading["history_length"],
             prefetch_lookahead=reading["prefetch_lookahead"],
+            playback_speed=reading["playback_speed"],
         ),
     )
 

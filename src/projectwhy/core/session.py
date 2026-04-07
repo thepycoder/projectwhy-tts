@@ -7,12 +7,14 @@ import time
 from collections import deque
 from typing import Any
 
+import numpy as np
 import pypdfium2 as pdfium
 
 from projectwhy.core.document import ensure_pdf_page_loaded
 from projectwhy.core.models import BBox, Block, BlockType, Document, Page, ReadingState, WordPosition, WordTimestamp
 from projectwhy.core.player import AudioPlayer
 from projectwhy.core.prefetch import BlockJob, Prefetcher
+from projectwhy.core.time_stretch import time_stretch
 from projectwhy.core.tts.base import TTSEngine
 
 
@@ -125,6 +127,7 @@ class ReadingSession:
         pdf_scale: float = 2.0,
         history_length: int = 20,
         prefetch_lookahead: int = 3,
+        playback_speed: float = 1.0,
     ) -> None:
         self.document = document
         self.pdf = pdf
@@ -133,6 +136,8 @@ class ReadingSession:
         self.layout_model = layout_model
         self.pdf_scale = pdf_scale
         self._prefetch_lookahead = prefetch_lookahead
+        self._speed_lock = threading.Lock()
+        self._playback_speed = float(playback_speed)
 
         self.page_index = 0
         self.block_index = 0
@@ -272,6 +277,43 @@ class ReadingSession:
 
         return mapping
 
+    @staticmethod
+    def _scale_word_timestamps(ts: list[WordTimestamp], speed: float) -> list[WordTimestamp]:
+        if abs(speed - 1.0) < 1e-6:
+            return ts
+        inv = 1.0 / speed
+        return [
+            WordTimestamp(text=w.text, start_sec=w.start_sec * inv, end_sec=w.end_sec * inv) for w in ts
+        ]
+
+    def _prepare_playback_audio(
+        self, job: BlockJob
+    ) -> tuple[np.ndarray, int, list[WordTimestamp] | None]:
+        """Rubber Band time-stretch and timestamps aligned to the played buffer."""
+        tr = job.tts_result
+        if tr is None or tr.audio is None or len(tr.audio) == 0:
+            return np.array([], dtype=np.float32), 24000, None
+        with self._speed_lock:
+            speed = self._playback_speed
+        raw = np.asarray(tr.audio, dtype=np.float32).reshape(-1)
+        stretched = time_stretch(raw, tr.sample_rate, speed)
+        ts = tr.word_timestamps
+        scaled_ts = self._scale_word_timestamps(ts, speed) if ts else None
+        return stretched, tr.sample_rate, scaled_ts
+
+    def _maybe_restart_current_utt_for_speed(self) -> None:
+        if self._worker is None or not self._worker.is_alive():
+            return
+        if not (self.player.is_playing() or self.player.is_paused()):
+            return
+        job = self._current_job
+        if job is None or not job.tts_result or len(job.tts_result.audio) == 0:
+            return
+        self._skip_current = True
+        self.player.stop()
+        self._replay_queue.appendleft(job)
+        self._utterance_done.set()
+
     def _on_utterance_done(self) -> None:
         self._utterance_done.set()
 
@@ -309,10 +351,8 @@ class ReadingSession:
             self.block_index = job.block_index
             self._current_block = job.block
             self._current_job = job
-            self._current_timestamps = (
-                job.tts_result.word_timestamps if job.tts_result else None
-            )
             self._current_alignment = job.alignment
+            self._current_timestamps = None
 
             if self._stop.is_set():
                 break
@@ -323,13 +363,16 @@ class ReadingSession:
             self._skip_current = False
             self._utterance_done.clear()
             if job.tts_result and job.tts_result.audio is not None and len(job.tts_result.audio) > 0:
+                audio_out, sr_out, ts_out = self._prepare_playback_audio(job)
+                self._current_timestamps = ts_out
                 self.player.play(
-                    job.tts_result.audio,
-                    job.tts_result.sample_rate,
+                    audio_out,
+                    sr_out,
                     on_complete=self._on_utterance_done,
                 )
                 self._utterance_done.wait(timeout=7200.0)
             else:
+                self._current_timestamps = None
                 self._on_utterance_done()
 
             if not self._skip_current:
@@ -441,21 +484,29 @@ class ReadingSession:
         """True when the playback worker is alive (playing or paused mid-playback)."""
         return self._worker is not None and self._worker.is_alive()
 
-    def set_playback_settings(self, history_length: int, prefetch_lookahead: int) -> None:
-        """Update history size and prefetch depth; used when settings change at runtime."""
+    def set_playback_settings(
+        self, history_length: int, prefetch_lookahead: int, playback_speed: float
+    ) -> None:
+        """Update history size, prefetch depth, and default playback speed from settings."""
         self._prefetch_lookahead = prefetch_lookahead
         kept = list(self._history)
         if len(kept) > history_length:
             kept = kept[-history_length:]
         self._history = deque(kept, maxlen=history_length)
+        with self._speed_lock:
+            old = self._playback_speed
+            self._playback_speed = float(playback_speed)
+        if old != float(playback_speed):
+            self._maybe_restart_current_utt_for_speed()
 
     def set_voice(self, voice: str) -> None:
         if hasattr(self.tts, "voice"):
             setattr(self.tts, "voice", voice)
 
     def set_speed(self, speed: float) -> None:
-        if hasattr(self.tts, "speed"):
-            setattr(self.tts, "speed", float(speed))
+        with self._speed_lock:
+            self._playback_speed = float(speed)
+        self._maybe_restart_current_utt_for_speed()
 
     def get_state(self) -> ReadingState:
         pos = self.player.get_position_sec()
