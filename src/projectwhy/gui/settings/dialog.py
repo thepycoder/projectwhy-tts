@@ -16,7 +16,12 @@ from PyQt6.QtWidgets import (
 )
 
 from projectwhy.config import AppConfig
-from projectwhy.gui.settings.pages import GeneralSettingsPage, PlaybackSettingsPage
+from projectwhy.gui.settings.pages import (
+    BlockTypesSettingsPage,
+    GeneralSettingsPage,
+    PdfTextSettingsPage,
+    PlaybackSettingsPage,
+)
 
 
 class SettingsDialog(QDialog):
@@ -64,6 +69,8 @@ class SettingsDialog(QDialog):
         """Register new settings sections here (order = sidebar order)."""
         return [
             PlaybackSettingsPage(),
+            BlockTypesSettingsPage(),
+            PdfTextSettingsPage(),
             GeneralSettingsPage(),
         ]
 

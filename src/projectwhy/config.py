@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import Any
 
 try:
     import tomllib
@@ -56,11 +57,48 @@ class ReadingConfig:
 
 
 @dataclass
+class PdfTextConfig:
+    """Characters used when extracting PDF words (pypdfium2 line-break + hyphen continuation)."""
+
+    line_break_marker: str
+    soft_hyphen_continuation: str
+
+
+DEFAULT_PDF_TEXT = PdfTextConfig(line_break_marker="\ufffe", soft_hyphen_continuation="\u00ad")
+
+
+@dataclass
+class BlocksConfig:
+    """Per PP-DocLayout class: keys are ``BlockType`` values (e.g. ``document_title``)."""
+
+    types: dict[str, dict[str, Any]]
+
+
+@dataclass
 class AppConfig:
     tts: TTSConfig
     layout: LayoutConfig
     display: DisplayConfig
     reading: ReadingConfig
+    pdf_text: PdfTextConfig
+    blocks: BlocksConfig
+
+
+def _normalize_block_types(raw: Any) -> dict[str, dict[str, Any]]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for name, row in raw.items():
+        if not isinstance(name, str) or not isinstance(row, dict):
+            continue
+        entry: dict[str, Any] = {}
+        if "speak" in row:
+            entry["speak"] = bool(row["speak"])
+        if "pause_after" in row:
+            entry["pause_after"] = float(row["pause_after"])
+        if entry:
+            out[name] = entry
+    return out
 
 
 def _config_from_toml_dict(data: dict) -> AppConfig:
@@ -69,6 +107,8 @@ def _config_from_toml_dict(data: dict) -> AppConfig:
     layout = data["layout"]
     display = data["display"]
     reading = data["reading"]
+    pdf_text = data["pdf_text"]
+    blocks = data["blocks"]
     return AppConfig(
         tts=TTSConfig(
             engine=t["engine"],
@@ -99,6 +139,11 @@ def _config_from_toml_dict(data: dict) -> AppConfig:
             prefetch_lookahead=reading["prefetch_lookahead"],
             playback_speed=clamp_playback_speed(reading["playback_speed"]),
         ),
+        pdf_text=PdfTextConfig(
+            line_break_marker=str(pdf_text["line_break_marker"]),
+            soft_hyphen_continuation=str(pdf_text["soft_hyphen_continuation"]),
+        ),
+        blocks=BlocksConfig(types=_normalize_block_types(blocks.get("types", {}))),
     )
 
 

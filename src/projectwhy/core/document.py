@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pypdfium2 as pdfium
 
+from projectwhy.config import DEFAULT_PDF_TEXT, PdfTextConfig
 from projectwhy.core.epub import load_epub_document
 from projectwhy.core.layout import layout_and_assign_words
 from projectwhy.core.models import Document, Page
@@ -28,6 +29,7 @@ def ensure_pdf_page_loaded(
     pdf: pdfium.PdfDocument,
     layout_model,
     pdf_scale: float,
+    pdf_text: PdfTextConfig | None = None,
 ) -> Page:
     if page_index < 0 or page_index >= len(doc.pages):
         raise IndexError("page_index out of range")
@@ -35,11 +37,19 @@ def ensure_pdf_page_loaded(
     if page.blocks and page.image is not None:
         return page
 
+    pt = pdf_text or DEFAULT_PDF_TEXT
     p = pdf[page_index]
     try:
-        pil, words = extract_words(p, pdf_scale)
+        pil, words = extract_words(p, pdf_scale, pdf_text=pt)
         w, h = pil.size
-        blocks = layout_and_assign_words(pil, words, layout_model, w, h)
+        blocks = layout_and_assign_words(
+            pil,
+            words,
+            layout_model,
+            w,
+            h,
+            soft_hyphen_continuation=pt.soft_hyphen_continuation or "",
+        )
         page.image = pil
         page.blocks = blocks
     finally:
@@ -54,12 +64,13 @@ def ensure_pdf_neighbor_pages_loaded(
     pdf: pdfium.PdfDocument,
     layout_model,
     pdf_scale: float,
+    pdf_text: PdfTextConfig | None = None,
 ) -> None:
     """Prefetch current, previous, and next PDF pages (lazy layout + text)."""
     for delta in (-1, 0, 1):
         i = center_index + delta
         if 0 <= i < len(doc.pages):
-            ensure_pdf_page_loaded(doc, i, pdf, layout_model, pdf_scale)
+            ensure_pdf_page_loaded(doc, i, pdf, layout_model, pdf_scale, pdf_text=pdf_text)
 
 
 def open_pdf_document(path: str) -> tuple[Document, pdfium.PdfDocument]:

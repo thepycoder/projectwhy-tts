@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 import pypdfium2 as pdfium
 
+from projectwhy.config import DEFAULT_PDF_TEXT, PdfTextConfig
 from projectwhy.core.document import ensure_pdf_page_loaded
 from projectwhy.core.models import BBox, Block, BlockType, Document, Page, ReadingState, TTSResult, WordPosition, WordTimestamp
 from projectwhy.core.player import AudioPlayer
@@ -19,102 +20,72 @@ from projectwhy.core.utterance_cache import UtteranceCache
 
 logger = logging.getLogger(__name__)
 
-
-BLOCK_CONFIG: dict[BlockType, dict[str, Any]] = {
-    BlockType.DOCUMENT_TITLE: {
-        "speak": True,
-        "pause_after": 1.0,
-        "keep_if_no_words": False,
-    },
-    BlockType.DOC_TITLE: {
-        "speak": True,
-        "pause_after": 1.0,
-        "keep_if_no_words": False,
-    },
-    BlockType.PARAGRAPH_TITLE: {
-        "speak": True,
-        "pause_after": 0.8,
-        "keep_if_no_words": False,
-    },
-    BlockType.TEXT: {"speak": True, "pause_after": 0.0, "keep_if_no_words": False},
-    BlockType.CONTENT: {"speak": True, "pause_after": 0.3, "keep_if_no_words": False},
-    BlockType.PAGE_NUMBER: {
-        "speak": False,
-        "pause_after": 0.0,
-        "keep_if_no_words": False,
-    },
-    BlockType.NUMBER: {
-        "speak": False,
-        "pause_after": 0.0,
-        "keep_if_no_words": False,
-    },
-    BlockType.ABSTRACT: {"speak": True, "pause_after": 0.4, "keep_if_no_words": False},
-    BlockType.TABLE_OF_CONTENTS: {
-        "speak": False,
-        "pause_after": 0.0,
-        "keep_if_no_words": False,
-    },
-    BlockType.REFERENCES: {
-        "speak": False,
-        "pause_after": 0.0,
-        "keep_if_no_words": False,
-    },
-    BlockType.FOOTNOTE: {
-        "speak": True,
-        "pause_after": 0.3,
-        "keep_if_no_words": False,
-    },
-    BlockType.HEADER: {"speak": False, "pause_after": 0.0, "keep_if_no_words": False},
-    BlockType.FOOTER: {"speak": False, "pause_after": 0.0, "keep_if_no_words": False},
-    BlockType.ALGORITHM: {"speak": True, "pause_after": 0.3, "keep_if_no_words": False},
-    BlockType.FORMULA: {"speak": False, "pause_after": 0.0, "keep_if_no_words": True},
-    BlockType.FORMULA_NUMBER: {
-        "speak": False,
-        "pause_after": 0.0,
-        "keep_if_no_words": True,
-    },
-    BlockType.IMAGE: {"speak": False, "pause_after": 0.0, "keep_if_no_words": True},
-    BlockType.FIGURE_CAPTION: {
-        "speak": True,
-        "pause_after": 0.5,
-        "keep_if_no_words": False,
-    },
-    BlockType.TABLE: {"speak": False, "pause_after": 0.0, "keep_if_no_words": True},
-    BlockType.TABLE_CAPTION: {
-        "speak": True,
-        "pause_after": 0.5,
-        "keep_if_no_words": False,
-    },
-    BlockType.SEAL: {"speak": False, "pause_after": 0.0, "keep_if_no_words": True},
-    BlockType.FIGURE_TITLE: {
-        "speak": True,
-        "pause_after": 0.6,
-        "keep_if_no_words": False,
-    },
-    BlockType.CHART_TITLE: {
-        "speak": True,
-        "pause_after": 0.6,
-        "keep_if_no_words": False,
-    },
-    BlockType.FIGURE: {"speak": False, "pause_after": 0.0, "keep_if_no_words": True},
-    BlockType.CHART: {"speak": False, "pause_after": 0.0, "keep_if_no_words": True},
-    BlockType.HEADER_IMAGE: {
-        "speak": False,
-        "pause_after": 0.0,
-        "keep_if_no_words": True,
-    },
-    BlockType.FOOTER_IMAGE: {
-        "speak": False,
-        "pause_after": 0.0,
-        "keep_if_no_words": True,
-    },
-    BlockType.ASIDE_TEXT: {"speak": True, "pause_after": 0.3, "keep_if_no_words": False},
-    BlockType.UNKNOWN: {
-        "speak": False,
-        "pause_after": 0.0,
-        "keep_if_no_words": False,
-    },
+# Built-in TTS behavior per PP-DocLayout class (overridable via config ``[blocks.types.*]``).
+DEFAULT_BLOCK_CONFIG: dict[BlockType, dict[str, Any]] = {
+    BlockType.DOCUMENT_TITLE: {"speak": True, "pause_after": 1.0},
+    BlockType.DOC_TITLE: {"speak": True, "pause_after": 1.0},
+    BlockType.PARAGRAPH_TITLE: {"speak": True, "pause_after": 0.8},
+    BlockType.TEXT: {"speak": True, "pause_after": 0.0},
+    BlockType.CONTENT: {"speak": True, "pause_after": 0.3},
+    BlockType.PAGE_NUMBER: {"speak": False, "pause_after": 0.0},
+    BlockType.NUMBER: {"speak": False, "pause_after": 0.0},
+    BlockType.ABSTRACT: {"speak": True, "pause_after": 0.4},
+    BlockType.TABLE_OF_CONTENTS: {"speak": False, "pause_after": 0.0},
+    BlockType.REFERENCES: {"speak": False, "pause_after": 0.0},
+    BlockType.FOOTNOTE: {"speak": True, "pause_after": 0.3},
+    BlockType.HEADER: {"speak": False, "pause_after": 0.0},
+    BlockType.FOOTER: {"speak": False, "pause_after": 0.0},
+    BlockType.ALGORITHM: {"speak": True, "pause_after": 0.3},
+    BlockType.FORMULA: {"speak": False, "pause_after": 0.0},
+    BlockType.FORMULA_NUMBER: {"speak": False, "pause_after": 0.0},
+    BlockType.IMAGE: {"speak": False, "pause_after": 0.0},
+    BlockType.FIGURE_CAPTION: {"speak": True, "pause_after": 0.5},
+    BlockType.TABLE: {"speak": False, "pause_after": 0.0},
+    BlockType.TABLE_CAPTION: {"speak": True, "pause_after": 0.5},
+    BlockType.SEAL: {"speak": False, "pause_after": 0.0},
+    BlockType.FIGURE_TITLE: {"speak": True, "pause_after": 0.6},
+    BlockType.CHART_TITLE: {"speak": True, "pause_after": 0.6},
+    BlockType.FIGURE: {"speak": False, "pause_after": 0.0},
+    BlockType.CHART: {"speak": False, "pause_after": 0.0},
+    BlockType.HEADER_IMAGE: {"speak": False, "pause_after": 0.0},
+    BlockType.FOOTER_IMAGE: {"speak": False, "pause_after": 0.0},
+    BlockType.ASIDE_TEXT: {"speak": True, "pause_after": 0.3},
+    BlockType.UNKNOWN: {"speak": False, "pause_after": 0.0},
 }
+
+
+def merged_block_config(overrides: dict[str, dict[str, Any]] | None) -> dict[BlockType, dict[str, Any]]:
+    """Return full block settings: defaults plus optional per-type overrides from config."""
+    o = overrides or {}
+    result: dict[BlockType, dict[str, Any]] = {
+        bt: {"speak": bool(d["speak"]), "pause_after": float(d["pause_after"])}
+        for bt, d in DEFAULT_BLOCK_CONFIG.items()
+    }
+    for key, row in o.items():
+        try:
+            bt = BlockType(key)
+        except ValueError:
+            continue
+        if bt not in result:
+            result[bt] = {"speak": True, "pause_after": 0.0}
+        if not isinstance(row, dict):
+            continue
+        if "speak" in row:
+            result[bt]["speak"] = bool(row["speak"])
+        if "pause_after" in row:
+            result[bt]["pause_after"] = float(row["pause_after"])
+    return result
+
+
+def speak_heuristic(block: Block, block_config: dict[BlockType, dict[str, Any]]) -> bool:
+    """Whether *block* would be spoken given *block_config* (same rules as ``ReadingSession``)."""
+    cfg = block_config.get(
+        block.block_type,
+        {"speak": True, "pause_after": 0.3},
+    )
+    if not block.text.strip() and cfg["speak"]:
+        return False
+    return bool(cfg["speak"])
 
 
 class ReadingSession:
@@ -130,6 +101,8 @@ class ReadingSession:
         tts_cache_max_entries: int = 64,
         prefetch_lookahead: int = 3,
         playback_speed: float = 1.0,
+        pdf_text: PdfTextConfig | None = None,
+        block_config: dict[BlockType, dict[str, Any]] | None = None,
     ) -> None:
         self.document = document
         self.pdf = pdf
@@ -137,6 +110,8 @@ class ReadingSession:
         self.player = player
         self.layout_model = layout_model
         self.pdf_scale = pdf_scale
+        self._pdf_text = pdf_text or DEFAULT_PDF_TEXT
+        self._block_config = block_config or merged_block_config({})
         self._prefetch_lookahead = prefetch_lookahead
         self._speed_lock = threading.Lock()
         self._playback_speed = float(playback_speed)
@@ -180,6 +155,7 @@ class ReadingSession:
                 self.pdf,
                 self.layout_model,
                 self.pdf_scale,
+                pdf_text=self._pdf_text,
             )
 
     def current_page(self) -> Page:
@@ -299,21 +275,16 @@ class ReadingSession:
 
     # -- block type helpers --------------------------------------------------
 
-    @staticmethod
-    def _should_speak(block: Block) -> bool:
-        cfg = BLOCK_CONFIG.get(
-            block.block_type,
-            {"speak": True, "pause_after": 0.3, "keep_if_no_words": False},
-        )
-        if not block.text.strip() and cfg["speak"]:
-            return False
-        return bool(cfg["speak"])
+    def would_speak(self, block: Block) -> bool:
+        return speak_heuristic(block, self._block_config)
 
-    @staticmethod
-    def _pause_after_block(block: Block) -> float:
-        cfg = BLOCK_CONFIG.get(
+    def _should_speak(self, block: Block) -> bool:
+        return self.would_speak(block)
+
+    def _pause_after_block(self, block: Block) -> float:
+        cfg = self._block_config.get(
             block.block_type,
-            {"speak": True, "pause_after": 0.3, "keep_if_no_words": False},
+            {"speak": True, "pause_after": 0.3},
         )
         return float(cfg["pause_after"])
 
@@ -518,6 +489,7 @@ class ReadingSession:
             self.pdf,
             layout_model=self.layout_model,
             pdf_scale=self.pdf_scale,
+            pdf_text=self._pdf_text,
             should_speak=self._should_speak,
             page_lock=self._page_lock,
             cache=self._tts_cache,
@@ -575,6 +547,14 @@ class ReadingSession:
             self._playback_speed = float(playback_speed)
         if old != float(playback_speed):
             self._maybe_restart_current_utt_for_speed()
+
+    def set_pdf_text(self, pdf_text: PdfTextConfig) -> None:
+        self._pdf_text = pdf_text
+        if self.warmer is not None:
+            self.warmer.set_pdf_text(pdf_text)
+
+    def set_block_config(self, block_config: dict[BlockType, dict[str, Any]]) -> None:
+        self._block_config = block_config
 
     def set_voice(self, voice: str) -> None:
         if hasattr(self.tts, "voice"):

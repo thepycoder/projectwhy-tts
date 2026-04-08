@@ -17,7 +17,8 @@ from PyQt6.QtWidgets import (
 from projectwhy.config import AppConfig, save
 from projectwhy.core.document import load_document
 from projectwhy.core.player import AudioPlayer
-from projectwhy.core.session import ReadingSession
+from projectwhy.core.models import Block
+from projectwhy.core.session import ReadingSession, merged_block_config, speak_heuristic
 from projectwhy.core.tts.base import TTSEngine
 from projectwhy.gui.controls import ControlBar
 from projectwhy.gui.inspector.dock import InspectorDock
@@ -85,6 +86,11 @@ class MainWindow(QMainWindow):
         if initial_path:
             self.open_path(initial_path)
 
+    def _inspector_speak_check(self, block: Block) -> bool:
+        if self.session is not None:
+            return self.session.would_speak(block)
+        return speak_heuristic(block, merged_block_config(self.cfg.blocks.types))
+
     def _create_menus(self) -> None:
         m = self.menuBar().addMenu("File")
         a_open = m.addAction("Open…")
@@ -115,6 +121,8 @@ class MainWindow(QMainWindow):
                 self.cfg.reading.prefetch_lookahead,
                 self.cfg.reading.playback_speed,
             )
+            self.session.set_pdf_text(self.cfg.pdf_text)
+            self.session.set_block_config(merged_block_config(self.cfg.blocks.types))
         self._controls.set_playback_speed(self.cfg.reading.playback_speed)
 
     def _menu_open(self) -> None:
@@ -150,6 +158,8 @@ class MainWindow(QMainWindow):
             tts_cache_max_entries=self.cfg.reading.tts_cache_max_entries,
             prefetch_lookahead=self.cfg.reading.prefetch_lookahead,
             playback_speed=self.cfg.reading.playback_speed,
+            pdf_text=self.cfg.pdf_text,
+            block_config=merged_block_config(self.cfg.blocks.types),
         )
         self._last_poll_page = -1
         self._inspector.reset()
@@ -250,7 +260,7 @@ class MainWindow(QMainWindow):
         if self._inspector.isVisible():
             p = self.session.current_page()
             st = self.session.get_state()
-            self._inspector.update_page(p, st)
+            self._inspector.update_page(p, st, speak_check=self._inspector_speak_check)
             if doc.doc_type == "pdf":
                 self._pdf_view.set_block_overlays(p.blocks, st.block_index)
 
@@ -281,7 +291,7 @@ class MainWindow(QMainWindow):
 
         if self._inspector.isVisible():
             page = self.session.current_page()
-            self._inspector.update_page(page, st)
+            self._inspector.update_page(page, st, speak_check=self._inspector_speak_check)
             if doc.doc_type == "pdf":
                 self._pdf_view.set_block_overlays(page.blocks, st.block_index)
             w = self.session.warmer

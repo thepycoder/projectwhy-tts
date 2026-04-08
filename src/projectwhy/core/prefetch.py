@@ -10,6 +10,7 @@ from typing import Any
 
 import pypdfium2 as pdfium
 
+from projectwhy.config import PdfTextConfig
 from projectwhy.core.document import ensure_pdf_page_loaded
 from projectwhy.core.models import Block, Document, Page
 from projectwhy.core.utterance_cache import UtteranceCache
@@ -46,6 +47,7 @@ class PrefetchWarmer:
         *,
         layout_model: Any,
         pdf_scale: float,
+        pdf_text: PdfTextConfig,
         should_speak: Callable[[Block], bool],
         page_lock: threading.Lock,
         cache: UtteranceCache,
@@ -56,6 +58,7 @@ class PrefetchWarmer:
         self._pdf = pdf
         self._layout_model = layout_model
         self._pdf_scale = pdf_scale
+        self._pdf_text = pdf_text
         self._should_speak = should_speak
         self._page_lock = page_lock
         self._cache = cache
@@ -98,6 +101,9 @@ class PrefetchWarmer:
         self._lookahead = n
         self.notify()
 
+    def set_pdf_text(self, pdf_text: PdfTextConfig) -> None:
+        self._pdf_text = pdf_text
+
     def peek_snapshot(self) -> list[WarmRow]:
         """Return a snapshot of current warm targets (safe to call from any thread)."""
         with self._snapshot_lock:
@@ -110,7 +116,12 @@ class PrefetchWarmer:
             return self._document.pages[idx]
         with self._page_lock:
             return ensure_pdf_page_loaded(
-                self._document, idx, self._pdf, self._layout_model, self._pdf_scale
+                self._document,
+                idx,
+                self._pdf,
+                self._layout_model,
+                self._pdf_scale,
+                pdf_text=self._pdf_text,
             )
 
     def _find_next(self, pi: int, bi: int) -> tuple[int, int] | None:

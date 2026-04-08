@@ -12,7 +12,7 @@ from projectwhy.config import load
 from projectwhy.core.layout import layout_and_assign_words, load_layout_model
 from projectwhy.core.models import BlockType
 from projectwhy.core.pdf import extract_words, open_pdf
-from projectwhy.core.session import ReadingSession
+from projectwhy.core.session import merged_block_config, speak_heuristic
 
 from tests.helpers import assert_reading_order, find_block_containing
 
@@ -62,14 +62,15 @@ def test_sewtha_p1_speakable_block_order_matches_ground_truth(sewtha_p1_blocks_d
 
     Playback next/prev bugs were timing-dependent (audio callback generation). This test
     instead pins the **deterministic** order the session walks: same block list order as
-    layout + ``ReadingSession._should_speak`` (skips e.g. footer). If layout or speak rules
+    layout + ``speak_heuristic`` / session rules (skips e.g. footer). If layout or speak rules
     change intentionally, update ``tests/fixtures/sewtha_p1_speakable_order.json``.
     """
+    cfg_m = merged_block_config({})
     blocks = sewtha_p1_blocks_doclayout_l_scale4
     live = [
         (b.block_type.value, " ".join(b.text.split()))
         for b in blocks
-        if ReadingSession._should_speak(b)
+        if speak_heuristic(b, cfg_m)
     ]
     expected = [tuple(pair) for pair in json.loads(_SEWTHA_P1_SPEAKABLE_ORDER_JSON.read_text(encoding="utf-8"))]
     assert live == expected

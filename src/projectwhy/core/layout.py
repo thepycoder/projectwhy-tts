@@ -118,34 +118,29 @@ def _sort_words_into_lines(words: list) -> list:
     return result
 
 
-_SOFT_HYPHEN_CONT = "\u00ad"
-
-
-def _rejoin_hyphenated(words: list) -> list:
-    """Merge word pairs marked with trailing soft hyphen (line-break split from PDF)."""
-    if not words:
-        return []
+def _rejoin_hyphenated(words: list, continuation: str) -> list:
+    """Merge word pairs marked with trailing *continuation* (line-break split from PDF)."""
+    if not words or not continuation:
+        return list(words)
     result: list = []
     i = 0
     while i < len(words):
         w = words[i]
-        if w.text.endswith(_SOFT_HYPHEN_CONT) and i + 1 < len(words):
+        if w.text.endswith(continuation) and i + 1 < len(words):
             nxt = words[i + 1]
-            merged_text = w.text.removesuffix(_SOFT_HYPHEN_CONT) + nxt.text
+            merged_text = w.text.removesuffix(continuation) + nxt.text
             result.append(WordPosition(text=merged_text, bbox=nxt.bbox))
             i += 2
         else:
-            if w.text.endswith(_SOFT_HYPHEN_CONT):
-                result.append(
-                    WordPosition(text=w.text.removesuffix(_SOFT_HYPHEN_CONT), bbox=w.bbox)
-                )
+            if w.text.endswith(continuation):
+                result.append(WordPosition(text=w.text.removesuffix(continuation), bbox=w.bbox))
             else:
                 result.append(w)
             i += 1
     return result
 
 
-def assign_words_to_blocks(blocks: list[Block], words: list) -> None:
+def assign_words_to_blocks(blocks: list[Block], words: list, *, soft_hyphen_continuation: str) -> None:
     """Mutate blocks: set words list and combined text."""
     for b in blocks:
         b.words = []
@@ -179,16 +174,8 @@ def assign_words_to_blocks(blocks: list[Block], words: list) -> None:
             nearest.words.append(w)
 
     for b in blocks:
-        b.words = _rejoin_hyphenated(_sort_words_into_lines(b.words))
+        b.words = _rejoin_hyphenated(_sort_words_into_lines(b.words), soft_hyphen_continuation)
         b.text = " ".join(w.text for w in b.words).strip()
-
-
-def _block_keeps_without_words(block_type: BlockType) -> bool:
-    """Lazy import avoids import cycle (session imports document → layout)."""
-    from projectwhy.core.session import BLOCK_CONFIG
-
-    cfg = BLOCK_CONFIG.get(block_type, {})
-    return bool(cfg.get("keep_if_no_words", False))
 
 
 def layout_and_assign_words(
@@ -197,6 +184,8 @@ def layout_and_assign_words(
     model,
     page_w: int,
     page_h: int,
+    *,
+    soft_hyphen_continuation: str = "\u00ad",
 ) -> list[Block]:
     blocks = analyze_layout(image, model)
     if not blocks:
@@ -206,8 +195,8 @@ def layout_and_assign_words(
             bbox=BBox(0, 0, float(page_w), float(page_h)),
         )
         blocks = [one]
-    assign_words_to_blocks(blocks, words)
-    blocks = [b for b in blocks if b.text or _block_keeps_without_words(b.block_type)]
+    assign_words_to_blocks(blocks, words, soft_hyphen_continuation=soft_hyphen_continuation)
+    blocks = [b for b in blocks if b.text.strip()]
     if not blocks:
         blocks = [
             Block(
@@ -219,7 +208,10 @@ def layout_and_assign_words(
         ]
     blocks = sort_blocks_reading_order(blocks, float(page_w), float(page_h))
     if not any(b.text.strip() for b in blocks) and words:
-        words_sorted = _rejoin_hyphenated(_sort_words_into_lines(words))
+        words_sorted = _rejoin_hyphenated(
+            _sort_words_into_lines(words),
+            soft_hyphen_continuation,
+        )
         merged_text = " ".join(w.text for w in words_sorted)
         blocks = [
             Block(

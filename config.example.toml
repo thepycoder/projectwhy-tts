@@ -35,3 +35,9 @@ tts_cache_max_entries = 64
 prefetch_lookahead = 3
 # 0.5–2.0 in 0.25 steps; WSOLA pitch-preserving time stretch when not 1.0
 playback_speed = 1.0
+
+[pdf_text]
+line_break_marker = "\ufffe"
+soft_hyphen_continuation = "\u00ad"
+
+[blocks.types]

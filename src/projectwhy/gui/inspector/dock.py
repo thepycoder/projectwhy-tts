@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QShowEvent, QHideEvent
 from PyQt6.QtWidgets import (
@@ -17,9 +19,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from projectwhy.core.models import Page, ReadingState
+from projectwhy.core.models import Block, Page, ReadingState
 from projectwhy.core.prefetch import WarmRow
-from projectwhy.core.session import ReadingSession
 from projectwhy.gui.inspector.colors import rgb_for_block_type
 
 
@@ -46,7 +47,13 @@ class LayoutPanel(QWidget):
     def overlays_enabled(self) -> bool:
         return self._overlay_cb.isChecked()
 
-    def update_page(self, page: Page, state: ReadingState) -> None:
+    def update_page(
+        self,
+        page: Page,
+        state: ReadingState,
+        *,
+        speak_check: Callable[[Block], bool],
+    ) -> None:
         blocks = page.blocks
         self._table.setRowCount(len(blocks))
         active_idx = state.block_index
@@ -74,7 +81,7 @@ class LayoutPanel(QWidget):
             x_item.setFlags(base_flags)
             self._table.setItem(i, 2, x_item)
 
-            action = "Speak" if ReadingSession._should_speak(block) else "Skip"
+            action = "Speak" if speak_check(block) else "Skip"
             a_item = QTableWidgetItem(action)
             a_item.setFlags(base_flags)
             self._table.setItem(i, 3, a_item)
@@ -209,8 +216,14 @@ class InspectorDock(QDockWidget):
     def overlays_enabled(self) -> bool:
         return self._layout_panel.overlays_enabled()
 
-    def update_page(self, page: Page, state: ReadingState) -> None:
-        self._layout_panel.update_page(page, state)
+    def update_page(
+        self,
+        page: Page,
+        state: ReadingState,
+        *,
+        speak_check: Callable[[Block], bool],
+    ) -> None:
+        self._layout_panel.update_page(page, state, speak_check=speak_check)
         self._detail.update_page(page, state)
 
     def update_pipeline(self, rows: list[WarmRow]) -> None:

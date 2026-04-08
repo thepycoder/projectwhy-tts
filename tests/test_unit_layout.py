@@ -27,7 +27,7 @@ def test_rejoin_hyphenated_merges_soft_hyphen_pair():
         WordPosition(f"hyph{shy}", BBox(0, 0, 1, 1)),
         WordPosition("en", BBox(0, 0, 1, 1)),
     ]
-    out = _rejoin_hyphenated(words)
+    out = _rejoin_hyphenated(words, shy)
     assert len(out) == 1
     assert out[0].text == "hyphen"
 
@@ -35,9 +35,19 @@ def test_rejoin_hyphenated_merges_soft_hyphen_pair():
 def test_rejoin_hyphenated_trailing_soft_hyphen_last_word():
     shy = "\u00ad"
     words = [WordPosition(f"end{shy}", BBox(0, 0, 1, 1))]
-    out = _rejoin_hyphenated(words)
+    out = _rejoin_hyphenated(words, shy)
     assert len(out) == 1
     assert out[0].text == "end"
+
+
+def test_rejoin_hyphenated_no_continuation_returns_unchanged_order():
+    shy = "\u00ad"
+    words = [
+        WordPosition(f"hyph{shy}", BBox(0, 0, 1, 1)),
+        WordPosition("en", BBox(0, 0, 1, 1)),
+    ]
+    out = _rejoin_hyphenated(words, "")
+    assert len(out) == 2
 
 
 def test_assign_words_to_blocks_nearest_when_outside_all_boxes():
@@ -46,7 +56,7 @@ def test_assign_words_to_blocks_nearest_when_outside_all_boxes():
     blocks = [left, right]
     # Center (56, 50) lies in the gap; closer to right block center (80, 50) than left (20, 50).
     w = WordPosition("lonely", BBox(55, 40, 57, 60))
-    assign_words_to_blocks(blocks, [w])
+    assign_words_to_blocks(blocks, [w], soft_hyphen_continuation="\u00ad")
     assert right.words
     assert "lonely" in right.text
 

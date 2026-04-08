@@ -5,12 +5,8 @@ from __future__ import annotations
 import pypdfium2 as pdfium
 from PIL import Image
 
+from projectwhy.config import DEFAULT_PDF_TEXT, PdfTextConfig
 from projectwhy.core.models import BBox, WordPosition
-
-# pypdfium2 uses this as a placeholder where a PDF line-break splits a word (e.g. hyphenation).
-_PDF_LINE_BREAK_MARKER = "\ufffe"
-# Marks a word half that continues on the next line; stripped / merged in layout._rejoin_hyphenated.
-_SOFT_HYPHEN_CONT = "\u00ad"
 
 
 def open_pdf(path: str) -> pdfium.PdfDocument:
@@ -44,7 +40,15 @@ def _pdf_to_image_xy(
     return x1, y1, x2, y2
 
 
-def extract_words(page: pdfium.PdfPage, scale: float) -> tuple[Image.Image, list[WordPosition]]:
+def extract_words(
+    page: pdfium.PdfPage,
+    scale: float,
+    pdf_text: PdfTextConfig | None = None,
+) -> tuple[Image.Image, list[WordPosition]]:
+    pt = pdf_text or DEFAULT_PDF_TEXT
+    line_break_marker = pt.line_break_marker or ""
+    soft_hyphen = pt.soft_hyphen_continuation or ""
+
     pil = render_page(page, scale)
     img_w, img_h = pil.size
     page_w = float(page.get_width())
@@ -63,8 +67,8 @@ def extract_words(page: pdfium.PdfPage, scale: float) -> tuple[Image.Image, list
         if not word_text:
             current_chars.clear()
             return None
-        if line_break:
-            word_text += _SOFT_HYPHEN_CONT
+        if line_break and soft_hyphen:
+            word_text += soft_hyphen
         x1 = min(b[0] for b in boxes)
         y1 = min(b[1] for b in boxes)
         x2 = max(b[2] for b in boxes)
@@ -84,7 +88,7 @@ def extract_words(page: pdfium.PdfPage, scale: float) -> tuple[Image.Image, list
                 words.append(w)
             continue
 
-        if ch == _PDF_LINE_BREAK_MARKER:
+        if line_break_marker and ch == line_break_marker:
             w = flush_word(line_break=True)
             if w is not None:
                 words.append(w)
