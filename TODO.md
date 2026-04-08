@@ -5,10 +5,10 @@
 - [x] Speed should not be native kokoro speed, but audio ramp with pitch correction as done in original openreader
 - [x] Set up tests on specific PDFs that might give problems
 - [x] Multithreading: both kokoro and yolo requests should be queued and pre-loaded, even from following pages, so there is no stutter
-- [ ] Hover over words to start playing there
+- [x] Hover over words to start playing there
 - [x] Page number navigation
 - [x] Jump back and forward in yolo blocks from GUI
-- [ ] Custom dictionary / substitutions
+- [x] Custom dictionary / substitutions
 - [x] Skipping UI for specific layout block types (need mayor settings plan)
 - [ ] Add custom API options for TTS (OpenAI, Mistral)
 - [x] Line break chars in pdf.py and layout.py hardcoded. Should be user settings

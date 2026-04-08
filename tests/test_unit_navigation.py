@@ -7,8 +7,10 @@ import time
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 
-from projectwhy.core.models import BBox, Block, BlockType, Document, Page, TTSResult, WordTimestamp
+from projectwhy.core.models import BBox, Block, BlockType, Document, Page, TTSResult, WordPosition, WordTimestamp
+from projectwhy.core.pdf import word_bbox_at_blocks_point, word_hit_at_page_point
 from projectwhy.core.session import ReadingSession
 
 
@@ -462,3 +464,47 @@ class TestGenerationCounter:
             assert pi == 0
             assert bi in (0, 1)
             assert gen >= 0
+
+
+class TestWordSeekHelpers:
+    def test_start_sec_for_word_index_exact(self) -> None:
+        ts = [
+            WordTimestamp("a", 0.0, 0.1),
+            WordTimestamp("b", 0.1, 0.2),
+            WordTimestamp("c", 0.2, 0.3),
+        ]
+        alignment = [0, 1, 2]
+        sec = ReadingSession._start_sec_for_word_index(ts, alignment, 1, 1.0)
+        assert sec == pytest.approx(0.1)
+
+    def test_start_sec_fallback_to_prior_slot(self) -> None:
+        ts = [
+            WordTimestamp("x", 0.0, 0.05),
+            WordTimestamp("y", 0.05, 0.1),
+        ]
+        alignment = [0, 0]
+        sec = ReadingSession._start_sec_for_word_index(ts, alignment, 0, 1.0)
+        assert sec == pytest.approx(0.0)
+
+    def test_start_sec_clamped_to_duration(self) -> None:
+        ts = [WordTimestamp("a", 0.0, 0.5)]
+        alignment = [0]
+        sec = ReadingSession._start_sec_for_word_index(ts, alignment, 0, 0.2)
+        assert 0 <= sec < 0.2
+
+    def test_word_hit_at_page_point_overlap(self) -> None:
+        w0 = WordPosition("a", BBox(10, 10, 20, 20))
+        w1 = WordPosition("b", BBox(15, 15, 25, 25))
+        b0 = Block(BlockType.TEXT, "a b", BBox(0, 0, 100, 100), words=[w0, w1])
+        p = Page(0, [b0])
+        assert word_hit_at_page_point(p, 16, 16) == (0, 1)
+        assert word_hit_at_page_point(p, 12, 12) == (0, 0)
+        assert word_hit_at_page_point(p, 5, 5) is None
+
+    def test_word_bbox_at_blocks_point(self) -> None:
+        w0 = WordPosition("a", BBox(10, 10, 20, 20))
+        b0 = Block(BlockType.TEXT, "a", BBox(0, 0, 100, 100), words=[w0])
+        bb = word_bbox_at_blocks_point([b0], 15, 15)
+        assert bb is not None
+        assert bb.x1 == 10 and bb.y1 == 10
+        assert word_bbox_at_blocks_point([], 15, 15) is None

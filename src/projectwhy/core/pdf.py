@@ -6,7 +6,7 @@ import pypdfium2 as pdfium
 from PIL import Image
 
 from projectwhy.config import DEFAULT_PDF_TEXT, PdfTextConfig
-from projectwhy.core.models import BBox, WordPosition
+from projectwhy.core.models import BBox, Block, Page, WordPosition
 
 
 def open_pdf(path: str) -> pdfium.PdfDocument:
@@ -106,3 +106,29 @@ def extract_words(
 
 def page_count(doc: pdfium.PdfDocument) -> int:
     return len(doc)
+
+
+def word_hit_at_page_point(page: Page, x: float, y: float) -> tuple[int, int] | None:
+    """Return ``(block_index, word_index)`` for the last word whose bbox contains *(x, y)*.
+
+    Coordinates are in the same space as ``WordPosition.bbox`` (rendered page image pixels).
+    Later blocks and words win on overlap (reading-order tie-break).
+    """
+    hit: tuple[int, int] | None = None
+    for bi, block in enumerate(page.blocks):
+        for wi, w in enumerate(block.words):
+            bb = w.bbox
+            if bb.x1 <= x <= bb.x2 and bb.y1 <= y <= bb.y2:
+                hit = (bi, wi)
+    return hit
+
+
+def word_bbox_at_blocks_point(blocks: list[Block], x: float, y: float) -> BBox | None:
+    """BBox of the topmost word under *(x, y)* in page-image space, or ``None``."""
+    if not blocks:
+        return None
+    hit = word_hit_at_page_point(Page(0, blocks), x, y)
+    if hit is None:
+        return None
+    bi, wi = hit
+    return blocks[bi].words[wi].bbox

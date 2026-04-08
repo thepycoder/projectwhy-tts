@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (
 
 from projectwhy.config import AppConfig, SubstitutionRuleConfig, save
 from projectwhy.core.document import load_document
+from projectwhy.core.pdf import word_hit_at_page_point
 from projectwhy.core.player import AudioPlayer
 from projectwhy.core.models import Block
 from projectwhy.core.session import ReadingSession, merged_block_config, speak_heuristic
@@ -87,6 +88,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._stack)
 
         self._pdf_view = PDFView()
+        self._pdf_view.setStatusTip("Click a word to start reading; drag to pan the page")
+        self._pdf_view.word_clicked.connect(self._on_pdf_word_click)
         self._text_view = TextDocView()
         self._stack.addWidget(self._pdf_view)
         self._stack.addWidget(self._text_view)
@@ -234,6 +237,21 @@ class MainWindow(QMainWindow):
 
         self._poll.start()
 
+    def _on_pdf_word_click(self, x: float, y: float) -> None:
+        if not self.session or self.session.document.doc_type != "pdf":
+            return
+        p = self.session.current_page()
+        if p.image is None:
+            return
+        w, h = p.image.size
+        if not (0 <= x < w and 0 <= y < h):
+            return
+        hit = word_hit_at_page_point(p, x, y)
+        if hit is None:
+            return
+        bi, wi = hit
+        self.session.play_from_pdf_word(self.session.page_index, bi, wi)
+
     def _on_play(self) -> None:
         if self.session:
             self.session.play()
@@ -298,6 +316,7 @@ class MainWindow(QMainWindow):
         self._controls.set_page_indicator(self.session.page_index, len(doc.pages))
         if doc.doc_type == "pdf":
             p = self.session.current_page()
+            self._pdf_view.set_hover_blocks(p.blocks)
             if p.image is not None:
                 self._pdf_view.set_page_image(p.image)
         else:
@@ -332,6 +351,8 @@ class MainWindow(QMainWindow):
         st = self.session.get_state()
 
         if doc.doc_type == "pdf":
+            page = self.session.current_page()
+            self._pdf_view.set_hover_blocks(page.blocks)
             self._pdf_view.set_highlight_bbox(bbox)
         else:
             if st.is_playing:

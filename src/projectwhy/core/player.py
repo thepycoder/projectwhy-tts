@@ -78,13 +78,21 @@ class AudioPlayer:
         audio: np.ndarray,
         sample_rate: int,
         on_complete: Callable[[], None] | None = None,
+        *,
+        start_sec: float = 0.0,
     ) -> None:
         self.stop()
         with self._lock:
             gen = self._play_generation
             self._audio = np.ascontiguousarray(audio, dtype=np.float32).reshape(-1, 1)
             self._sample_rate = sample_rate
-            self._current_frame = 0
+            frames_total = int(self._audio.shape[0])
+            start_frame = int(round(float(start_sec) * float(sample_rate)))
+            if frames_total <= 0:
+                start_frame = 0
+            else:
+                start_frame = max(0, min(start_frame, frames_total - 1))
+            self._current_frame = start_frame
             self._playing = True
             self._paused = False
             self._complete_event.clear()

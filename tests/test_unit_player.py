@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 
 def test_abort_does_not_invoke_next_on_complete() -> None:
@@ -34,3 +35,19 @@ def test_abort_does_not_invoke_next_on_complete() -> None:
 
     finished_callbacks[1]()
     assert calls == ["second"]
+
+
+def test_play_start_sec_sets_initial_frame() -> None:
+    from projectwhy.core.player import AudioPlayer
+
+    audio = np.zeros(48_000, dtype=np.float32)
+    stream = MagicMock()
+    stream.start = MagicMock()
+    stream.abort = MagicMock()
+    stream.close = MagicMock()
+
+    with patch("projectwhy.core.player.sd.OutputStream", return_value=stream):
+        p = AudioPlayer()
+        p.play(audio, 24_000, start_sec=0.5)
+
+    assert p.get_position_sec() == pytest.approx(0.5)

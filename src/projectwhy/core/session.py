@@ -146,6 +146,9 @@ class ReadingSession:
         self._current_pi: int | None = None
         self._current_bi: int | None = None
 
+        # (page_index, block_index, word_index) — consumed when that block plays
+        self._pending_word_seek: tuple[int, int, int] | None = None
+
     # -- page loading --------------------------------------------------------
 
     def _ensure_page(self, idx: int) -> Page:
@@ -186,6 +189,7 @@ class ReadingSession:
             self._cursor_gen += 1
             self.page_index = pi
             self.block_index = bi
+            self._pending_word_seek = None
         if self.warmer is not None:
             self.warmer.notify()
 
@@ -249,6 +253,38 @@ class ReadingSession:
         """Stop current audio immediately. The playback loop detects the cursor change and re-reads."""
         self.player.stop()
         self._utterance_done.set()
+
+    def play_from_pdf_word(self, page_index: int, block_index: int, word_index: int) -> bool:
+        """Move to the given block and start playback at *word_index* (PDF only; Ctrl+click in the GUI)."""
+        if self.document.doc_type != "pdf":
+            return False
+        page = self._ensure_page(page_index)
+        if block_index >= len(page.blocks):
+            return False
+        block = page.blocks[block_index]
+        if not self._should_speak(block):
+            return False
+        if word_index < 0 or word_index >= len(block.words):
+            return False
+
+        if self._paused:
+            self._paused = False
+            self._resume_event.set()
+
+        with self._cursor_lock:
+            self._cursor_gen += 1
+            self.page_index = page_index
+            self.block_index = block_index
+            self._pending_word_seek = (page_index, block_index, word_index)
+        if self.warmer is not None:
+            self.warmer.notify()
+        self._ensure_neighbor_pages()
+
+        if self._worker is not None and self._worker.is_alive():
+            self.interrupt_playback()
+        else:
+            self.play()
+        return True
 
     # -- page navigation -----------------------------------------------------
 
@@ -327,6 +363,35 @@ class ReadingSession:
             mapping.append(wi)
 
         return mapping
+
+    @staticmethod
+    def _start_sec_for_word_index(
+        scaled_ts: list[WordTimestamp] | None,
+        alignment: list[int],
+        word_index: int,
+        audio_duration_sec: float,
+    ) -> float:
+        """Map a ``block.words`` index to audio start time using TTS alignment."""
+        if not scaled_ts or not alignment or word_index < 0:
+            return 0.0
+        start = 0.0
+        matched = False
+        for i, wi in enumerate(alignment):
+            if i >= len(scaled_ts):
+                break
+            if wi == word_index:
+                start = scaled_ts[i].start_sec
+                matched = True
+                break
+        if not matched:
+            n = min(len(alignment), len(scaled_ts))
+            for i in range(n - 1, -1, -1):
+                if alignment[i] <= word_index:
+                    start = scaled_ts[i].start_sec
+                    break
+        eps = 1e-4
+        hi = max(0.0, audio_duration_sec - eps)
+        return max(0.0, min(float(start), hi))
 
     @staticmethod
     def _scale_word_timestamps(ts: list[WordTimestamp], speed: float) -> list[WordTimestamp]:
@@ -412,6 +477,10 @@ class ReadingSession:
             tts_parts = block_tts_parts(block, self._substitution_rules)
             tts_text = block_tts_text(tts_parts)
 
+            with self._cursor_lock:
+                if self._cursor_gen != gen:
+                    continue
+
             try:
                 tts_result = self._tts_cache.get_or_synthesize(tts_text)
             except Exception:
@@ -425,25 +494,40 @@ class ReadingSession:
                     self.page_index, self.block_index = next_pos
                 continue
 
+            audio_out, sr_out, ts_out = self._prepare_playback_audio(tts_result)
+            alignment = self._build_alignment(tts_parts, tts_result.word_timestamps or [])
+
+            utterance_start_sec = 0.0
             with self._cursor_lock:
                 if self._cursor_gen != gen:
                     continue
+                pw = self._pending_word_seek
+                if pw is not None:
+                    ppi, pbi, pwi = pw
+                    if ppi == pi and pbi == bi:
+                        self._pending_word_seek = None
+                        dur = len(audio_out) / float(sr_out) if sr_out > 0 else 0.0
+                        utterance_start_sec = self._start_sec_for_word_index(
+                            ts_out, alignment, pwi, dur
+                        )
+                    else:
+                        self._pending_word_seek = None
 
             self._current_block = block
             self._current_pi = pi
             self._current_bi = bi
-            self._current_timestamps = None
-            self._current_alignment = None
-
-            audio_out, sr_out, ts_out = self._prepare_playback_audio(tts_result)
-            alignment = self._build_alignment(tts_parts, tts_result.word_timestamps or [])
             self._current_alignment = alignment
             self._current_timestamps = ts_out
 
             self._skip_current = False
             self._utterance_done.clear()
             if audio_out is not None and len(audio_out) > 0:
-                self.player.play(audio_out, sr_out, on_complete=self._on_utterance_done)
+                self.player.play(
+                    audio_out,
+                    sr_out,
+                    self._on_utterance_done,
+                    start_sec=utterance_start_sec,
+                )
                 self._utterance_done.wait(timeout=7200.0)
             else:
                 self._on_utterance_done()
@@ -521,6 +605,8 @@ class ReadingSession:
         self.player.pause()
 
     def stop(self) -> None:
+        with self._cursor_lock:
+            self._pending_word_seek = None
         self.player.stop()
         self._paused = False
         self._resume_event.set()
