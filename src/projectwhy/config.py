@@ -50,7 +50,7 @@ class DisplayConfig:
 
 @dataclass
 class ReadingConfig:
-    history_length: int
+    tts_cache_max_entries: int
     prefetch_lookahead: int
     playback_speed: float
 
@@ -95,7 +95,7 @@ def _config_from_toml_dict(data: dict) -> AppConfig:
             highlight_color=display["highlight_color"],
         ),
         reading=ReadingConfig(
-            history_length=reading["history_length"],
+            tts_cache_max_entries=reading["tts_cache_max_entries"],
             prefetch_lookahead=reading["prefetch_lookahead"],
             playback_speed=clamp_playback_speed(reading["playback_speed"]),
         ),

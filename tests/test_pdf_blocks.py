@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 
@@ -11,11 +12,15 @@ from projectwhy.config import load
 from projectwhy.core.layout import layout_and_assign_words, load_layout_model
 from projectwhy.core.models import BlockType
 from projectwhy.core.pdf import extract_words, open_pdf
+from projectwhy.core.session import ReadingSession
 
 from tests.helpers import assert_reading_order, find_block_containing
 
 _FIXTURE_CONFIG = Path(__file__).resolve().parent / "fixtures" / "config.toml"
 _FIXTURE_PDF_DIR = Path(__file__).resolve().parent / "fixtures" / "pdfs"
+_SEWTHA_P1_SPEAKABLE_ORDER_JSON = (
+    Path(__file__).resolve().parent / "fixtures" / "sewtha_p1_speakable_order.json"
+)
 
 # Add regression tests here. One-shot scaffold:
 #   uv run python -m tests.helper_cli add /path/to/source.pdf --page N --snippet "..." \\
@@ -49,6 +54,25 @@ def sewtha_p1_blocks_doclayout_l_scale4():
     finally:
         page.close()
         doc.close()
+
+
+@pytest.mark.slow
+def test_sewtha_p1_speakable_block_order_matches_ground_truth(sewtha_p1_blocks_doclayout_l_scale4):
+    """Lock full speakable sequence for endorsements page (PP-DocLayout-L, scale 4).
+
+    Playback next/prev bugs were timing-dependent (audio callback generation). This test
+    instead pins the **deterministic** order the session walks: same block list order as
+    layout + ``ReadingSession._should_speak`` (skips e.g. footer). If layout or speak rules
+    change intentionally, update ``tests/fixtures/sewtha_p1_speakable_order.json``.
+    """
+    blocks = sewtha_p1_blocks_doclayout_l_scale4
+    live = [
+        (b.block_type.value, " ".join(b.text.split()))
+        for b in blocks
+        if ReadingSession._should_speak(b)
+    ]
+    expected = [tuple(pair) for pair in json.loads(_SEWTHA_P1_SPEAKABLE_ORDER_JSON.read_text(encoding="utf-8"))]
+    assert live == expected
 
 
 @pytest.mark.slow

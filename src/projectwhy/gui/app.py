@@ -111,7 +111,7 @@ class MainWindow(QMainWindow):
             return
         if self.session:
             self.session.set_playback_settings(
-                self.cfg.reading.history_length,
+                self.cfg.reading.tts_cache_max_entries,
                 self.cfg.reading.prefetch_lookahead,
                 self.cfg.reading.playback_speed,
             )
@@ -147,7 +147,7 @@ class MainWindow(QMainWindow):
             self.player,
             layout_model=self.layout_model,
             pdf_scale=self.cfg.display.pdf_scale,
-            history_length=self.cfg.reading.history_length,
+            tts_cache_max_entries=self.cfg.reading.tts_cache_max_entries,
             prefetch_lookahead=self.cfg.reading.prefetch_lookahead,
             playback_speed=self.cfg.reading.playback_speed,
         )
@@ -211,23 +211,18 @@ class MainWindow(QMainWindow):
     def _on_prev_block(self) -> None:
         if not self.session:
             return
+        self.session.prev_speakable_block()
         if self.session.is_active:
-            if not self.session.skip_backward():
-                self.session.stop()
-                self.session.prev_block()
-                self._refresh_page_view()
-        else:
-            self.session.prev_block()
-            self._refresh_page_view()
+            self.session.interrupt_playback()
+        self._refresh_page_view()
 
     def _on_next_block(self) -> None:
         if not self.session:
             return
+        self.session.next_speakable_block()
         if self.session.is_active:
-            self.session.skip_forward()
-        else:
-            self.session.next_block()
-            self._refresh_page_view()
+            self.session.interrupt_playback()
+        self._refresh_page_view()
 
     def _on_voice(self, v: str) -> None:
         if self.session:
@@ -289,8 +284,8 @@ class MainWindow(QMainWindow):
             self._inspector.update_page(page, st)
             if doc.doc_type == "pdf":
                 self._pdf_view.set_block_overlays(page.blocks, st.block_index)
-            pf = self.session.prefetcher
-            self._inspector.update_pipeline(pf.peek() if pf else [])
+            w = self.session.warmer
+            self._inspector.update_pipeline(w.peek_snapshot() if w else [])
         else:
             self._pdf_view.set_show_overlays(False)
             self._pdf_view.set_block_overlays([], None)

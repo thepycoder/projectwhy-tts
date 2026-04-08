@@ -1,21 +1,23 @@
-"""Reading session: navigation + playback orchestration."""
+"""Reading session: navigation, playback orchestration, and cursor management."""
 
 from __future__ import annotations
 
+import logging
 import threading
-import time
-from collections import deque
 from typing import Any
 
 import numpy as np
 import pypdfium2 as pdfium
 
 from projectwhy.core.document import ensure_pdf_page_loaded
-from projectwhy.core.models import BBox, Block, BlockType, Document, Page, ReadingState, WordPosition, WordTimestamp
+from projectwhy.core.models import BBox, Block, BlockType, Document, Page, ReadingState, TTSResult, WordPosition, WordTimestamp
 from projectwhy.core.player import AudioPlayer
-from projectwhy.core.prefetch import BlockJob, Prefetcher
+from projectwhy.core.prefetch import PrefetchWarmer
 from projectwhy.core.time_stretch import time_stretch
 from projectwhy.core.tts.base import TTSEngine
+from projectwhy.core.utterance_cache import UtteranceCache
+
+logger = logging.getLogger(__name__)
 
 
 BLOCK_CONFIG: dict[BlockType, dict[str, Any]] = {
@@ -125,7 +127,7 @@ class ReadingSession:
         *,
         layout_model: Any,
         pdf_scale: float = 2.0,
-        history_length: int = 20,
+        tts_cache_max_entries: int = 64,
         prefetch_lookahead: int = 3,
         playback_speed: float = 1.0,
     ) -> None:
@@ -139,26 +141,34 @@ class ReadingSession:
         self._speed_lock = threading.Lock()
         self._playback_speed = float(playback_speed)
 
+        # Cursor: protected by _cursor_lock; _cursor_gen bumped on every user-initiated move
+        self._cursor_lock = threading.Lock()
+        self._cursor_gen = 0
         self.page_index = 0
         self.block_index = 0
+
         self._page_lock = threading.Lock()
         self._tts_lock = threading.Lock()
+        self._tts_cache = UtteranceCache(tts, self._tts_lock, max_entries=tts_cache_max_entries)
+
         self._utterance_done = threading.Event()
         self._stop = threading.Event()
         self._paused = False
         self._resume_event = threading.Event()
         self._resume_event.set()
         self._worker: threading.Thread | None = None
-        self.prefetcher: Prefetcher | None = None
+        self.warmer: PrefetchWarmer | None = None
 
-        self._history: deque[BlockJob] = deque(maxlen=history_length)
-        self._replay_queue: deque[BlockJob] = deque()
-        self._current_job: BlockJob | None = None
         self._skip_current = False
 
+        # Playback tracking (for word-level highlights)
         self._current_timestamps: list[WordTimestamp] | None = None
         self._current_alignment: list[int] | None = None
         self._current_block: Block | None = None
+        self._current_pi: int | None = None
+        self._current_bi: int | None = None
+
+    # -- page loading --------------------------------------------------------
 
     def _ensure_page(self, idx: int) -> Page:
         if self.document.doc_type != "pdf" or self.pdf is None:
@@ -176,20 +186,101 @@ class ReadingSession:
         return self._ensure_page(self.page_index)
 
     def _ensure_neighbor_pages(self) -> None:
-        """Pre-load previous, current, and next PDF pages (all through the page lock)."""
         if self.document.doc_type != "pdf" or self.pdf is None:
             return
+        pi = self.page_index
         for delta in (-1, 0, 1):
-            i = self.page_index + delta
+            i = pi + delta
             if 0 <= i < len(self.document.pages):
                 self._ensure_page(i)
+
+    # -- cursor management ---------------------------------------------------
+
+    def _get_cursor_snapshot(self) -> tuple[int, int, int]:
+        """Return (page_index, block_index, cursor_gen) atomically. Safe to call from any thread."""
+        with self._cursor_lock:
+            return self.page_index, self.block_index, self._cursor_gen
+
+    def _move_cursor(self, pi: int, bi: int) -> None:
+        """Atomically write cursor and bump generation. Call from GUI thread only."""
+        with self._cursor_lock:
+            self._cursor_gen += 1
+            self.page_index = pi
+            self.block_index = bi
+        if self.warmer is not None:
+            self.warmer.notify()
+
+    # -- speakable navigation ------------------------------------------------
+
+    def _find_speakable_at_or_after(self, pi: int, bi: int) -> tuple[int, int] | None:
+        """Return first speakable block at or after (pi, bi), loading pages as needed."""
+        n_pages = len(self.document.pages)
+        while pi < n_pages:
+            page = self._ensure_page(pi)
+            while bi < len(page.blocks):
+                if self._should_speak(page.blocks[bi]):
+                    return pi, bi
+                bi += 1
+            pi += 1
+            bi = 0
+        return None
+
+    def _find_speakable_before(self, pi: int, bi: int) -> tuple[int, int] | None:
+        """Return last speakable block strictly before (pi, bi), loading pages as needed."""
+        cur_pi, cur_bi = pi, bi - 1
+        while cur_pi >= 0:
+            if cur_bi < 0:
+                cur_pi -= 1
+                if cur_pi < 0:
+                    return None
+                page = self._ensure_page(cur_pi)
+                cur_bi = len(page.blocks) - 1
+                if cur_bi < 0:
+                    continue
+            else:
+                page = self._ensure_page(cur_pi)
+            if self._should_speak(page.blocks[cur_bi]):
+                return cur_pi, cur_bi
+            cur_bi -= 1
+        return None
+
+    def next_speakable_block(self) -> bool:
+        """Advance cursor to the next speakable block. Bumps cursor generation. Returns False at EOF."""
+        with self._cursor_lock:
+            pi, bi = self.page_index, self.block_index
+        pos = self._find_speakable_at_or_after(pi, bi + 1)
+        if pos is None:
+            return False
+        self._move_cursor(*pos)
+        self._ensure_neighbor_pages()
+        return True
+
+    def prev_speakable_block(self) -> bool:
+        """Retreat cursor to the previous speakable block. Bumps cursor generation. Returns False at start."""
+        with self._cursor_lock:
+            pi, bi = self.page_index, self.block_index
+        pos = self._find_speakable_before(pi, bi)
+        if pos is None:
+            return False
+        self._move_cursor(*pos)
+        self._ensure_neighbor_pages()
+        return True
+
+    def interrupt_playback(self) -> None:
+        """Stop current audio immediately. The playback loop detects the cursor change and re-reads."""
+        self.player.stop()
+        self._utterance_done.set()
+
+    # -- page navigation -----------------------------------------------------
 
     def go_to_page(self, page_index: int) -> Page:
         if page_index < 0 or page_index >= len(self.document.pages):
             raise IndexError("page_index out of range")
-        self.page_index = page_index
-        self.block_index = 0
         page = self._ensure_page(page_index)
+        # Snap block_index to the first speakable block on this page (fall back to 0)
+        pos = self._find_speakable_at_or_after(page_index, 0)
+        new_bi = pos[1] if pos is not None and pos[0] == page_index else 0
+        self._move_cursor(page_index, new_bi)
         self._ensure_neighbor_pages()
         return page
 
@@ -206,26 +297,7 @@ class ReadingSession:
         idx = max(0, min(self.block_index, len(page.blocks) - 1))
         return page.blocks[idx]
 
-    def next_block(self) -> None:
-        page = self._ensure_page(self.page_index)
-        if self.block_index + 1 < len(page.blocks):
-            self.block_index += 1
-            return
-        if self.page_index + 1 < len(self.document.pages):
-            self.page_index += 1
-            self.block_index = 0
-            self._ensure_neighbor_pages()
-
-    def prev_block(self) -> None:
-        if self.block_index > 0:
-            self.block_index -= 1
-            return
-        if self.page_index <= 0:
-            return
-        self.page_index -= 1
-        prev = self._ensure_page(self.page_index)
-        self.block_index = max(0, len(prev.blocks) - 1)
-        self._ensure_neighbor_pages()
+    # -- block type helpers --------------------------------------------------
 
     @staticmethod
     def _should_speak(block: Block) -> bool:
@@ -287,32 +359,20 @@ class ReadingSession:
         ]
 
     def _prepare_playback_audio(
-        self, job: BlockJob
+        self, result: TTSResult
     ) -> tuple[np.ndarray, int, list[WordTimestamp] | None]:
         """WSOLA time-stretch and timestamps aligned to the played buffer."""
-        tr = job.tts_result
-        if tr is None or tr.audio is None or len(tr.audio) == 0:
+        if result is None or result.audio is None or len(result.audio) == 0:
             return np.array([], dtype=np.float32), 24000, None
         with self._speed_lock:
             speed = self._playback_speed
-        raw = np.asarray(tr.audio, dtype=np.float32).reshape(-1)
-        stretched = time_stretch(raw, tr.sample_rate, speed)
-        ts = tr.word_timestamps
+        raw = np.asarray(result.audio, dtype=np.float32).reshape(-1)
+        stretched = time_stretch(raw, result.sample_rate, speed)
+        ts = result.word_timestamps
         scaled_ts = self._scale_word_timestamps(ts, speed) if ts else None
-        return stretched, tr.sample_rate, scaled_ts
+        return stretched, result.sample_rate, scaled_ts
 
-    def _maybe_restart_current_utt_for_speed(self) -> None:
-        if self._worker is None or not self._worker.is_alive():
-            return
-        if not (self.player.is_playing() or self.player.is_paused()):
-            return
-        job = self._current_job
-        if job is None or not job.tts_result or len(job.tts_result.audio) == 0:
-            return
-        self._skip_current = True
-        self.player.stop()
-        self._replay_queue.appendleft(job)
-        self._utterance_done.set()
+    # -- playback internals --------------------------------------------------
 
     def _on_utterance_done(self) -> None:
         self._utterance_done.set()
@@ -323,71 +383,122 @@ class ReadingSession:
             self._resume_event.wait(timeout=0.2)
         return not self._stop.is_set()
 
-    def _take_next_job(self) -> BlockJob | None:
-        """Get the next job from the replay queue (priority) or prefetcher."""
-        if self._replay_queue:
-            return self._replay_queue.popleft()
-        prefetcher = self.prefetcher
-        if prefetcher is None:
-            return None
-        job = prefetcher.take_next()
-        if job is None and self._replay_queue:
-            return self._replay_queue.popleft()
-        return job
+    def _maybe_restart_current_utt_for_speed(self) -> None:
+        if self._worker is None or not self._worker.is_alive():
+            return
+        if not (self.player.is_playing() or self.player.is_paused()):
+            return
+        self._skip_current = True
+        self.player.stop()
+        self._utterance_done.set()
 
     def _playback_loop(self) -> None:
-        if self.prefetcher is None:
-            return
+        # Deferred auto-advance: computed at natural block end, committed only
+        # at the TOP of the next iteration — right before the new block starts
+        # synthesizing.  Until then the shared cursor stays on the block that
+        # just played, so GUI navigation reads the correct "current" position.
+        pending_pi: int | None = None
+        pending_bi: int | None = None
+        pending_gen: int = -1
 
         while not self._stop.is_set():
             if not self._wait_if_paused():
                 break
 
-            job = self._take_next_job()
-            if job is None:
-                break
+            with self._cursor_lock:
+                if pending_pi is not None and self._cursor_gen == pending_gen:
+                    self.page_index = pending_pi
+                    self.block_index = pending_bi
+                pending_pi = pending_bi = None
+                pi, bi, gen = self.page_index, self.block_index, self._cursor_gen
 
-            self.page_index = job.page_index
-            self.block_index = job.block_index
-            self._current_block = job.block
-            self._current_job = job
-            self._current_alignment = job.alignment
+            if self.warmer is not None:
+                self.warmer.notify()
+
+            try:
+                page = self._ensure_page(pi)
+            except Exception:
+                logger.exception("playback: failed to load page %d", pi)
+                break
+            if bi >= len(page.blocks):
+                pos = self._find_speakable_at_or_after(pi, 0)
+                if pos is None:
+                    break
+                with self._cursor_lock:
+                    if self._cursor_gen != gen:
+                        continue
+                    self.page_index, self.block_index = pos
+                continue
+            block = page.blocks[bi]
+
+            try:
+                tts_result = self._tts_cache.get_or_synthesize(block)
+            except Exception:
+                logger.exception("playback: synthesis failed for block (%d, %d)", pi, bi)
+                next_pos = self._find_speakable_at_or_after(pi, bi + 1)
+                with self._cursor_lock:
+                    if self._cursor_gen != gen:
+                        continue
+                    if next_pos is None:
+                        break
+                    self.page_index, self.block_index = next_pos
+                continue
+
+            with self._cursor_lock:
+                if self._cursor_gen != gen:
+                    continue
+
+            self._current_block = block
+            self._current_pi = pi
+            self._current_bi = bi
             self._current_timestamps = None
+            self._current_alignment = None
 
-            if self._stop.is_set():
-                break
-
-            if not self._wait_if_paused():
-                break
+            audio_out, sr_out, ts_out = self._prepare_playback_audio(tts_result)
+            alignment = self._build_alignment(block.words, tts_result.word_timestamps or [])
+            self._current_alignment = alignment
+            self._current_timestamps = ts_out
 
             self._skip_current = False
             self._utterance_done.clear()
-            if job.tts_result and job.tts_result.audio is not None and len(job.tts_result.audio) > 0:
-                audio_out, sr_out, ts_out = self._prepare_playback_audio(job)
-                self._current_timestamps = ts_out
-                self.player.play(
-                    audio_out,
-                    sr_out,
-                    on_complete=self._on_utterance_done,
-                )
+            if audio_out is not None and len(audio_out) > 0:
+                self.player.play(audio_out, sr_out, on_complete=self._on_utterance_done)
                 self._utterance_done.wait(timeout=7200.0)
             else:
-                self._current_timestamps = None
                 self._on_utterance_done()
-
-            if not self._skip_current:
-                self._history.append(job)
 
             if self._stop.is_set():
                 break
 
-            time.sleep(self._pause_after_block(job.block))
+            with self._cursor_lock:
+                if self._cursor_gen != gen:
+                    continue
 
+            if self._skip_current:
+                self._skip_current = False
+                continue
+
+            next_pos = self._find_speakable_at_or_after(pi, bi + 1)
+            if next_pos is None:
+                break
+
+            pending_pi, pending_bi = next_pos
+            pending_gen = gen
+
+            pause = self._pause_after_block(block)
+            if pause > 0:
+                self._utterance_done.clear()
+                self._utterance_done.wait(timeout=pause)
+
+        # Cleanup
         self.player.stop()
         self._current_block = None
-        self._current_job = None
+        self._current_pi = None
+        self._current_bi = None
         self._current_timestamps = None
         self._current_alignment = None
+
+    # -- public playback API -------------------------------------------------
 
     def play(self) -> None:
         if self._paused:
@@ -400,36 +511,28 @@ class ReadingSession:
         self._stop.clear()
         self._paused = False
         self._resume_event.set()
-        self._history.clear()
-        self._replay_queue.clear()
-        self._current_job = None
         self._skip_current = False
-        self.prefetcher = Prefetcher(
+
+        self.warmer = PrefetchWarmer(
             self.document,
             self.pdf,
-            self.tts,
             layout_model=self.layout_model,
             pdf_scale=self.pdf_scale,
             should_speak=self._should_speak,
-            build_alignment=self._build_alignment,
             page_lock=self._page_lock,
-            tts_lock=self._tts_lock,
+            cache=self._tts_cache,
+            get_cursor=self._get_cursor_snapshot,
             lookahead=self._prefetch_lookahead,
-            should_yield=lambda: bool(self._replay_queue),
         )
-        self.prefetcher.start(self.page_index, self.block_index)
+        self.warmer.start()
+
         self._worker = threading.Thread(
             target=self._playback_loop, name="reading-playback", daemon=True,
         )
         self._worker.start()
 
-    def _stop_prefetcher(self) -> None:
-        if self.prefetcher is not None:
-            self.prefetcher.stop()
-            self.prefetcher = None
-
     def pause(self) -> None:
-        """Pause audio playback; worker and prefetcher stay alive for fast resume."""
+        """Pause audio playback; worker and warmer stay alive for fast resume."""
         self._paused = True
         self._resume_event.clear()
         self.player.pause()
@@ -440,59 +543,33 @@ class ReadingSession:
         self._resume_event.set()
         self._stop.set()
         self._utterance_done.set()
-        self._stop_prefetcher()
+        self._stop_warmer()
         if self._worker is not None:
             self._worker.join(timeout=2.0)
         self._worker = None
         self._stop.clear()
-        self._replay_queue.clear()
-        self._current_job = None
         self._skip_current = False
 
-    def skip_forward(self) -> None:
-        """Skip current block; the loop advances to the next (already prefetched) block."""
-        self.player.stop()
-        self._utterance_done.set()
-
-    def skip_backward(self) -> bool:
-        """Jump back to the previously played block using cached audio.
-
-        Returns True if history was available, False otherwise.
-        """
-        if not self._history:
-            return False
-
-        prev_job = self._history.pop()
-        current = self._current_job
-
-        self._skip_current = True
-
-        if current is not None:
-            self._replay_queue.appendleft(current)
-        self._replay_queue.appendleft(prev_job)
-
-        self.player.stop()
-        self._utterance_done.set()
-
-        if self.prefetcher:
-            self.prefetcher.wake()
-
-        return True
+    def _stop_warmer(self) -> None:
+        if self.warmer is not None:
+            self.warmer.stop()
+            self.warmer = None
 
     @property
     def is_active(self) -> bool:
         """True when the playback worker is alive (playing or paused mid-playback)."""
         return self._worker is not None and self._worker.is_alive()
 
+    # -- settings ------------------------------------------------------------
+
     def set_playback_settings(
-        self, history_length: int, prefetch_lookahead: int, playback_speed: float
+        self, tts_cache_max_entries: int, prefetch_lookahead: int, playback_speed: float
     ) -> None:
-        """Update history size, prefetch depth, and default playback speed from settings."""
+        """Update cache size, prefetch depth, and playback speed from settings."""
         self._prefetch_lookahead = prefetch_lookahead
-        kept = list(self._history)
-        if len(kept) > history_length:
-            kept = kept[-history_length:]
-        self._history = deque(kept, maxlen=history_length)
+        self._tts_cache.update_max_entries(tts_cache_max_entries)
+        if self.warmer is not None:
+            self.warmer.update_lookahead(prefetch_lookahead)
         with self._speed_lock:
             old = self._playback_speed
             self._playback_speed = float(playback_speed)
@@ -502,11 +579,14 @@ class ReadingSession:
     def set_voice(self, voice: str) -> None:
         if hasattr(self.tts, "voice"):
             setattr(self.tts, "voice", voice)
+        self._tts_cache.clear()
 
     def set_speed(self, speed: float) -> None:
         with self._speed_lock:
             self._playback_speed = float(speed)
         self._maybe_restart_current_utt_for_speed()
+
+    # -- state queries -------------------------------------------------------
 
     def get_state(self) -> ReadingState:
         pos = self.player.get_position_sec()
@@ -542,14 +622,25 @@ class ReadingSession:
         return self._current_block
 
     def get_active_word_bbox(self) -> BBox | None:
-        st = self.get_state()
-        if st.is_playing:
-            block = self._current_block
-            if block is None:
-                return None
-            if st.word_index is not None and block.words:
-                idx = max(0, min(st.word_index, len(block.words) - 1))
-                return block.words[idx].bbox
-            return block.bbox
-        cursor = self.get_cursor_block()
-        return cursor.bbox if cursor else None
+        with self._cursor_lock:
+            cursor_pi, cursor_bi = self.page_index, self.block_index
+
+        cursor_block = self.get_cursor_block()
+        if cursor_block is None:
+            return None
+
+        # Word-level tracking only when audio is playing for exactly the cursor block
+        if (
+            self.player.is_playing()
+            and self._current_pi == cursor_pi
+            and self._current_bi == cursor_bi
+            and self._current_timestamps is not None
+            and cursor_block.words
+        ):
+            pos = self.player.get_position_sec()
+            wi = self._word_index_for_position(pos)
+            if wi is not None:
+                idx = max(0, min(wi, len(cursor_block.words) - 1))
+                return cursor_block.words[idx].bbox
+
+        return cursor_block.bbox

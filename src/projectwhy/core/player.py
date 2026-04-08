@@ -20,8 +20,15 @@ class AudioPlayer:
         self._stream: sd.OutputStream | None = None
         self._complete_event = threading.Event()
         self._on_complete: Callable[[], None] | None = None
+        # Bumped in stop() so a stale finished_callback from an aborted stream
+        # never fires the *next* play()'s on_complete (fixes immediate wait return).
+        self._play_generation = 0
 
-    def _start_stream(self) -> None:
+    def _start_stream(
+        self,
+        on_complete: Callable[[], None] | None,
+        completion_gen: int,
+    ) -> None:
         """Create and start an output stream from the current frame position."""
         audio = self._audio
         if audio is None:
@@ -50,11 +57,12 @@ class AudioPlayer:
             with self._lock:
                 if self._paused:
                     return
+                if self._play_generation != completion_gen:
+                    return
                 self._playing = False
             self._complete_event.set()
-            cb = self._on_complete
-            if cb:
-                cb()
+            if on_complete:
+                on_complete()
 
         self._stream = sd.OutputStream(
             samplerate=self._sample_rate,
@@ -73,6 +81,7 @@ class AudioPlayer:
     ) -> None:
         self.stop()
         with self._lock:
+            gen = self._play_generation
             self._audio = np.ascontiguousarray(audio, dtype=np.float32).reshape(-1, 1)
             self._sample_rate = sample_rate
             self._current_frame = 0
@@ -81,7 +90,7 @@ class AudioPlayer:
             self._complete_event.clear()
             self._on_complete = on_complete
 
-        self._start_stream()
+        self._start_stream(on_complete, gen)
 
     def play_blocking(self, audio: np.ndarray, sample_rate: int) -> None:
         e = threading.Event()
@@ -117,9 +126,13 @@ class AudioPlayer:
                 return
             self._paused = False
             self._playing = True
-        self._start_stream()
+            gen = self._play_generation
+            ocb = self._on_complete
+        self._start_stream(ocb, gen)
 
     def stop(self) -> None:
+        with self._lock:
+            self._play_generation += 1
         if self._stream:
             try:
                 self._stream.abort()

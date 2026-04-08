@@ -1,4 +1,4 @@
-"""Block-level prefetch pipeline: layout + TTS synthesis ahead of playback."""
+"""Cursor-driven prefetch warmer: fills UtteranceCache ahead of the playback cursor."""
 
 from __future__ import annotations
 
@@ -6,139 +6,102 @@ import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
-from enum import StrEnum
 from typing import Any
 
 import pypdfium2 as pdfium
 
 from projectwhy.core.document import ensure_pdf_page_loaded
-from projectwhy.core.models import Block, Document, Page, TTSResult, WordPosition, WordTimestamp
-from projectwhy.core.tts.base import TTSEngine
+from projectwhy.core.models import Block, Document, Page
+from projectwhy.core.utterance_cache import UtteranceCache
 
 logger = logging.getLogger(__name__)
 
 
-class JobStatus(StrEnum):
-    SYNTHESIZING = "synthesizing"
-    READY = "ready"
-    PLAYING = "playing"
-    DONE = "done"
-
-
 @dataclass
-class BlockJob:
+class WarmRow:
+    """Inspector snapshot of one warmer target."""
     page_index: int
     block_index: int
-    status: JobStatus
-    block: Block
-    tts_result: TTSResult | None = None
-    alignment: list[int] | None = None
+    block_type: str
+    cached: bool
 
 
-class Prefetcher:
-    """Walks ahead through the document, synthesizing upcoming speakable blocks.
+class PrefetchWarmer:
+    """Background thread that pre-synthesizes upcoming speakable blocks into UtteranceCache.
 
-    A single worker thread does page layout (if needed) + TTS for each block.
-    Backpressure keeps at most *lookahead* unconsumed jobs in the queue.
-    The playback thread calls ``take_next()``; the inspector calls ``peek()``.
+    The warmer reads the current cursor via *get_cursor* (which returns
+    ``(page_index, block_index, cursor_gen)`` under the session's cursor lock),
+    computes the next *lookahead* speakable block positions, and calls
+    ``cache.get_or_synthesize`` for each one that is not already cached.
+
+    Before and after each ``synthesize()`` call the warmer re-reads the cursor
+    generation; if it changed (user navigated), the current target list is
+    abandoned and the outer loop restarts from the new cursor.
     """
 
     def __init__(
         self,
         document: Document,
         pdf: pdfium.PdfDocument | None,
-        tts: TTSEngine,
         *,
         layout_model: Any,
         pdf_scale: float,
         should_speak: Callable[[Block], bool],
-        build_alignment: Callable[[list[WordPosition], list[WordTimestamp]], list[int]],
         page_lock: threading.Lock,
-        tts_lock: threading.Lock,
+        cache: UtteranceCache,
+        get_cursor: Callable[[], tuple[int, int, int]],
         lookahead: int = 3,
-        should_yield: Callable[[], bool] | None = None,
     ) -> None:
         self._document = document
         self._pdf = pdf
-        self._tts = tts
         self._layout_model = layout_model
         self._pdf_scale = pdf_scale
         self._should_speak = should_speak
-        self._build_alignment = build_alignment
         self._page_lock = page_lock
-        self._tts_lock = tts_lock
+        self._cache = cache
+        self._get_cursor = get_cursor
         self._lookahead = lookahead
-        self._should_yield = should_yield
 
-        self._jobs: list[BlockJob] = []
-        self._cond = threading.Condition()
+        self._wake = threading.Condition()
         self._cancel = threading.Event()
         self._worker: threading.Thread | None = None
-        self._exhausted = False
+
+        self._snapshot_lock = threading.Lock()
+        self._snapshot: list[WarmRow] = []
 
     # -- public API ----------------------------------------------------------
 
-    def start(self, page_index: int, block_index: int) -> None:
+    def start(self) -> None:
         self._cancel.clear()
-        self._exhausted = False
-        with self._cond:
-            self._jobs.clear()
         self._worker = threading.Thread(
-            target=self._run,
-            args=(page_index, block_index),
-            daemon=True,
-            name="prefetch",
+            target=self._run, daemon=True, name="prefetch-warmer"
         )
         self._worker.start()
+        self.notify()  # kick off an immediate pass
 
     def stop(self) -> None:
         self._cancel.set()
-        with self._cond:
-            self._cond.notify_all()
+        with self._wake:
+            self._wake.notify_all()
         if self._worker is not None:
             self._worker.join(timeout=3.0)
-        self._worker = None
-        with self._cond:
-            self._jobs.clear()
-            self._exhausted = False
+            self._worker = None
+        with self._snapshot_lock:
+            self._snapshot.clear()
 
-    def take_next(self) -> BlockJob | None:
-        """Block until the next job is READY.  Returns *None* at end-of-document, cancel, or yield."""
-        with self._cond:
-            while True:
-                if self._cancel.is_set():
-                    return None
-                if self._should_yield and self._should_yield():
-                    return None
+    def notify(self) -> None:
+        """Wake the warmer to re-read cursor and update targets."""
+        with self._wake:
+            self._wake.notify_all()
 
-                for job in self._jobs:
-                    if job.status == JobStatus.READY:
-                        for prev in self._jobs:
-                            if prev.status == JobStatus.PLAYING:
-                                prev.status = JobStatus.DONE
-                        job.status = JobStatus.PLAYING
-                        self._cond.notify_all()
-                        return job
+    def update_lookahead(self, n: int) -> None:
+        self._lookahead = n
+        self.notify()
 
-                if self._exhausted:
-                    return None
-
-                self._cond.wait(timeout=0.2)
-
-    def wake(self) -> None:
-        """Wake take_next() so it can re-check external conditions."""
-        with self._cond:
-            self._cond.notify_all()
-
-    def peek(self) -> list[BlockJob]:
-        """Snapshot of the pipeline (safe to call from any thread)."""
-        with self._cond:
-            return list(self._jobs)
-
-    def invalidate(self, page_index: int, block_index: int) -> None:
-        """Flush the queue and restart from a new position."""
-        self.stop()
-        self.start(page_index, block_index)
+    def peek_snapshot(self) -> list[WarmRow]:
+        """Return a snapshot of current warm targets (safe to call from any thread)."""
+        with self._snapshot_lock:
+            return list(self._snapshot)
 
     # -- worker internals ----------------------------------------------------
 
@@ -147,17 +110,13 @@ class Prefetcher:
             return self._document.pages[idx]
         with self._page_lock:
             return ensure_pdf_page_loaded(
-                self._document,
-                idx,
-                self._pdf,
-                self._layout_model,
-                self._pdf_scale,
+                self._document, idx, self._pdf, self._layout_model, self._pdf_scale
             )
 
-    def _next_speakable(self, pi: int, bi: int) -> tuple[int, int] | None:
-        """Scan forward for the next speakable block, loading pages as needed."""
-        n_pages = len(self._document.pages)
-        while pi < n_pages:
+    def _find_next(self, pi: int, bi: int) -> tuple[int, int] | None:
+        """Return first speakable block at or after (pi, bi), loading pages as needed."""
+        n = len(self._document.pages)
+        while pi < n:
             if self._cancel.is_set():
                 return None
             page = self._ensure_page(pi)
@@ -169,76 +128,84 @@ class Prefetcher:
             bi = 0
         return None
 
-    def _wait_for_space(self) -> bool:
-        """Block until fewer than *lookahead* jobs are unconsumed.  False on cancel."""
-        with self._cond:
-            while not self._cancel.is_set():
-                unconsumed = sum(
-                    1
-                    for j in self._jobs
-                    if j.status in (JobStatus.SYNTHESIZING, JobStatus.READY)
-                )
-                if unconsumed < self._lookahead:
-                    return True
-                self._cond.wait(timeout=0.2)
-        return False
-
-    def _run(self, pi: int, bi: int) -> None:
+    def _run(self) -> None:
         try:
-            self._run_inner(pi, bi)
+            self._run_inner()
         except Exception:
-            logger.exception("prefetch worker crashed")
-        finally:
-            with self._cond:
-                self._exhausted = True
-                self._cond.notify_all()
+            logger.exception("prefetch warmer crashed")
 
-    def _run_inner(self, pi: int, bi: int) -> None:
+    def _run_inner(self) -> None:
         while not self._cancel.is_set():
-            with self._cond:
-                self._jobs = [j for j in self._jobs if j.status != JobStatus.DONE]
-
-            if not self._wait_for_space():
-                return
-
-            pos = self._next_speakable(pi, bi)
-            if pos is None:
-                return
-            pi, bi = pos
-
-            page = self._document.pages[pi]
-            block = page.blocks[bi]
-
-            job = BlockJob(
-                page_index=pi,
-                block_index=bi,
-                status=JobStatus.SYNTHESIZING,
-                block=block,
-            )
-            with self._cond:
-                self._jobs.append(job)
-                self._cond.notify_all()
+            with self._wake:
+                self._wake.wait(timeout=0.5)
 
             if self._cancel.is_set():
-                return
+                break
 
-            with self._tts_lock:
+            pi, bi, gen = self._get_cursor()
+
+            # Compute lookahead targets starting from current cursor (inclusive)
+            targets: list[tuple[int, int]] = []
+            cur_pi, cur_bi = pi, bi
+            for _ in range(self._lookahead):
                 if self._cancel.is_set():
-                    return
-                res = self._tts.synthesize(block.text)
+                    break
+                pos = self._find_next(cur_pi, cur_bi)
+                if pos is None:
+                    break
+                targets.append(pos)
+                cur_pi, cur_bi = pos[0], pos[1] + 1
 
             if self._cancel.is_set():
-                return
+                break
 
-            job.tts_result = res
-            job.alignment = (
-                self._build_alignment(block.words, res.word_timestamps)
-                if res.word_timestamps
-                else None
-            )
+            # Build inspector snapshot (use already-loaded page data)
+            rows: list[WarmRow] = []
+            for tpi, tbi in targets:
+                pages = self._document.pages
+                if tpi < len(pages) and tbi < len(pages[tpi].blocks):
+                    block = pages[tpi].blocks[tbi]
+                    rows.append(WarmRow(tpi, tbi, block.block_type.value, self._cache.get(block) is not None))
+            with self._snapshot_lock:
+                self._snapshot = rows
 
-            with self._cond:
-                job.status = JobStatus.READY
-                self._cond.notify_all()
+            # Synthesize uncached targets
+            for i, (tpi, tbi) in enumerate(targets):
+                if self._cancel.is_set():
+                    break
 
-            bi += 1
+                _, _, cur_gen = self._get_cursor()
+                if cur_gen != gen:
+                    break
+
+                pages = self._document.pages
+                if tpi >= len(pages) or tbi >= len(pages[tpi].blocks):
+                    continue
+                block = pages[tpi].blocks[tbi]
+
+                if self._cache.get(block) is not None:
+                    # already cached — update snapshot if needed
+                    with self._snapshot_lock:
+                        if i < len(self._snapshot) and not self._snapshot[i].cached:
+                            r = self._snapshot[i]
+                            self._snapshot[i] = WarmRow(r.page_index, r.block_index, r.block_type, True)
+                    continue
+
+                _, _, cur_gen = self._get_cursor()
+                if cur_gen != gen:
+                    break
+
+                try:
+                    self._cache.get_or_synthesize(block)
+                except Exception:
+                    logger.exception("warmer: synthesis failed for block (%d, %d)", tpi, tbi)
+                    continue
+
+                with self._snapshot_lock:
+                    if i < len(self._snapshot):
+                        r = self._snapshot[i]
+                        self._snapshot[i] = WarmRow(r.page_index, r.block_index, r.block_type, True)
+
+                _, _, cur_gen = self._get_cursor()
+                if cur_gen != gen:
+                    break

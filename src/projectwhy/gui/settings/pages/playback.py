@@ -23,8 +23,8 @@ class PlaybackSettingsPage:
         outer.setContentsMargins(8, 8, 8, 8)
 
         intro = QLabel(
-            "Controls how far you can skip backward with cached audio, and how many "
-            "blocks are synthesized ahead of playback."
+            "Controls how many synthesized utterances are kept in the TTS cache, "
+            "and how many blocks are pre-warmed ahead of the current position."
         )
         intro.setWordWrap(True)
         outer.addWidget(intro)
@@ -32,21 +32,21 @@ class PlaybackSettingsPage:
         group = QGroupBox("Pipeline")
         form = QFormLayout(group)
 
-        self._history = QSpinBox()
-        self._history.setRange(1, 500)
-        self._history.setToolTip(
-            "Maximum number of recently played blocks kept in memory for Prev block "
-            "(reuses TTS audio without re-synthesis)."
+        self._cache_entries = QSpinBox()
+        self._cache_entries.setRange(4, 500)
+        self._cache_entries.setToolTip(
+            "Maximum number of synthesized blocks held in the TTS audio cache. "
+            "Larger values let you navigate back instantly over more history; uses more RAM."
         )
-        form.addRow("Block history size:", self._history)
+        form.addRow("TTS cache entries:", self._cache_entries)
 
         self._lookahead = QSpinBox()
         self._lookahead.setRange(1, 20)
         self._lookahead.setToolTip(
-            "How many upcoming speakable blocks may be waiting in the prefetch queue "
-            "(higher = smoother skipping forward, more RAM and TTS work)."
+            "How many upcoming speakable blocks are pre-synthesized in the background "
+            "(higher = smoother auto-play, more TTS work and RAM)."
         )
-        form.addRow("Prefetch queue depth:", self._lookahead)
+        form.addRow("Speakable lookahead:", self._lookahead)
 
         self._playback_speed = QComboBox()
         for sp in PLAYBACK_SPEED_CHOICES:
@@ -67,13 +67,13 @@ class PlaybackSettingsPage:
         return self._root
 
     def load_from_config(self, cfg: AppConfig) -> None:
-        self._history.setValue(cfg.reading.history_length)
+        self._cache_entries.setValue(cfg.reading.tts_cache_max_entries)
         self._lookahead.setValue(cfg.reading.prefetch_lookahead)
         c = clamp_playback_speed(cfg.reading.playback_speed)
         self._playback_speed.setCurrentIndex(PLAYBACK_SPEED_CHOICES.index(c))
 
     def apply_to_config(self, cfg: AppConfig) -> str | None:
-        cfg.reading.history_length = self._history.value()
+        cfg.reading.tts_cache_max_entries = self._cache_entries.value()
         cfg.reading.prefetch_lookahead = self._lookahead.value()
         cfg.reading.playback_speed = float(self._playback_speed.currentData())
         return None

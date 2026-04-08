@@ -1,8 +1,8 @@
 - [x] Set up a good testing harness
 - [x] Sometimes it seems a sentence is cut-off mid voice by a linebreak. Could be yolo?
-- [ ] Double column layouts order is incorrect.
+- [x] Double column layouts order is incorrect.
 - [x] In general: order does not fully work yet. In sewtha.pdf, words that are line-breaked seem to jump forward in the order.
-- [ ] Speed should not be native kokoro speed, but audio ramp with pitch correction as done in original openreader
+- [x] Speed should not be native kokoro speed, but audio ramp with pitch correction as done in original openreader
 - [x] Set up tests on specific PDFs that might give problems
 - [x] Multithreading: both kokoro and yolo requests should be queued and pre-loaded, even from following pages, so there is no stutter
 - [ ] Hover over words to start playing there

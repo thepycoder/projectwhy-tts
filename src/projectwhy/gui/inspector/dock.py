@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from projectwhy.core.models import Page, ReadingState
-from projectwhy.core.prefetch import BlockJob, JobStatus
+from projectwhy.core.prefetch import WarmRow
 from projectwhy.core.session import ReadingSession
 from projectwhy.gui.inspector.colors import rgb_for_block_type
 
@@ -135,16 +135,8 @@ class DetailPanel(QWidget):
         self._words.setPlainText("\n".join(lines) if lines else "(no words)")
 
 
-_STATUS_COLORS: dict[JobStatus, tuple[int, int, int, int]] = {
-    JobStatus.SYNTHESIZING: (200, 220, 255, 140),
-    JobStatus.READY: (180, 255, 180, 140),
-    JobStatus.PLAYING: (255, 220, 100, 140),
-    JobStatus.DONE: (220, 220, 220, 100),
-}
-
-
 class PipelinePanel(QWidget):
-    """Shows the prefetch pipeline: which blocks are being synthesized / ready / playing."""
+    """Shows the warmer lookahead: which upcoming blocks are cached vs pending."""
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -163,35 +155,34 @@ class PipelinePanel(QWidget):
         self._empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lay.addWidget(self._empty_label)
 
-    def update_jobs(self, jobs: list[BlockJob]) -> None:
-        has_jobs = bool(jobs)
-        self._table.setVisible(has_jobs)
-        self._empty_label.setVisible(not has_jobs)
-        if not has_jobs:
+    def update_jobs(self, rows: list[WarmRow]) -> None:
+        has_rows = bool(rows)
+        self._table.setVisible(has_rows)
+        self._empty_label.setVisible(not has_rows)
+        if not has_rows:
             self._table.setRowCount(0)
             return
 
         base_flags = Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEnabled
-        self._table.setRowCount(len(jobs))
-        for i, job in enumerate(jobs):
-            page_item = QTableWidgetItem(str(job.page_index + 1))
+        self._table.setRowCount(len(rows))
+        for i, row in enumerate(rows):
+            page_item = QTableWidgetItem(str(row.page_index + 1))
             page_item.setFlags(base_flags)
             self._table.setItem(i, 0, page_item)
 
-            block_item = QTableWidgetItem(str(job.block_index))
+            block_item = QTableWidgetItem(str(row.block_index))
             block_item.setFlags(base_flags)
             self._table.setItem(i, 1, block_item)
 
-            type_text = job.block.block_type.value if job.block else "—"
-            type_item = QTableWidgetItem(type_text)
+            type_item = QTableWidgetItem(row.block_type)
             type_item.setFlags(base_flags)
             self._table.setItem(i, 2, type_item)
 
-            status_item = QTableWidgetItem(job.status.value)
+            status_text = "cached" if row.cached else "pending"
+            status_item = QTableWidgetItem(status_text)
             status_item.setFlags(base_flags)
-            rgba = _STATUS_COLORS.get(job.status)
-            if rgba:
-                status_item.setBackground(QColor(*rgba))
+            color = QColor(180, 255, 180, 140) if row.cached else QColor(220, 220, 220, 100)
+            status_item.setBackground(color)
             self._table.setItem(i, 3, status_item)
 
 
@@ -222,8 +213,8 @@ class InspectorDock(QDockWidget):
         self._layout_panel.update_page(page, state)
         self._detail.update_page(page, state)
 
-    def update_pipeline(self, jobs: list[BlockJob]) -> None:
-        self._pipeline.update_jobs(jobs)
+    def update_pipeline(self, rows: list[WarmRow]) -> None:
+        self._pipeline.update_jobs(rows)
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
