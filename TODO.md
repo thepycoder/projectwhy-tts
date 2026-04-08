@@ -9,6 +9,6 @@
 - [x] Page number navigation
 - [x] Jump back and forward in yolo blocks from GUI
 - [ ] Custom dictionary / substitutions
-- [ ] Skipping UI for specific layout block types (need mayor settings plan)
+- [x] Skipping UI for specific layout block types (need mayor settings plan)
 - [ ] Add custom API options for TTS (OpenAI, Mistral)
-- [ ] Line break chars in pdf.py and layout.py hardcoded. Should be user settings
+- [x] Line break chars in pdf.py and layout.py hardcoded. Should be user settings
