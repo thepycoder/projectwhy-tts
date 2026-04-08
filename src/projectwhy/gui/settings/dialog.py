@@ -21,18 +21,26 @@ from projectwhy.gui.settings.pages import (
     GeneralSettingsPage,
     PdfTextSettingsPage,
     PlaybackSettingsPage,
+    SubstitutionsSettingsPage,
 )
 
 
 class SettingsDialog(QDialog):
     """Host for category pages; add new pages by appending to *_build_pages."""
 
-    def __init__(self, cfg: AppConfig, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        cfg: AppConfig,
+        parent: QWidget | None = None,
+        *,
+        doc_path: str | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setMinimumSize(640, 420)
         self.resize(720, 480)
         self._cfg = cfg
+        self._doc_path = doc_path
 
         root = QVBoxLayout(self)
         body = QHBoxLayout()
@@ -71,6 +79,7 @@ class SettingsDialog(QDialog):
             PlaybackSettingsPage(),
             BlockTypesSettingsPage(),
             PdfTextSettingsPage(),
+            SubstitutionsSettingsPage(doc_path=self._doc_path),
             GeneralSettingsPage(),
         ]
 

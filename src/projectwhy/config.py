@@ -75,6 +75,20 @@ class BlocksConfig:
 
 
 @dataclass
+class SubstitutionRuleConfig:
+    find: str
+    replace: str
+    regex: bool
+
+
+@dataclass
+class SubstitutionsConfig:
+    """Global TTS find-and-replace rules (applied before synthesis)."""
+
+    rules: list[SubstitutionRuleConfig]
+
+
+@dataclass
 class AppConfig:
     tts: TTSConfig
     layout: LayoutConfig
@@ -82,6 +96,7 @@ class AppConfig:
     reading: ReadingConfig
     pdf_text: PdfTextConfig
     blocks: BlocksConfig
+    substitutions: SubstitutionsConfig
 
 
 def _normalize_block_types(raw: Any) -> dict[str, dict[str, Any]]:
@@ -98,6 +113,21 @@ def _normalize_block_types(raw: Any) -> dict[str, dict[str, Any]]:
             entry["pause_after"] = float(row["pause_after"])
         if entry:
             out[name] = entry
+    return out
+
+
+def _parse_substitution_rules(raw: Any) -> list[SubstitutionRuleConfig]:
+    if not isinstance(raw, list):
+        return []
+    out: list[SubstitutionRuleConfig] = []
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        find = entry.get("find", "")
+        replace = entry.get("replace", "")
+        regex = bool(entry.get("regex", False))
+        if isinstance(find, str) and isinstance(replace, str) and find:
+            out.append(SubstitutionRuleConfig(find=find, replace=replace, regex=regex))
     return out
 
 
@@ -144,6 +174,9 @@ def _config_from_toml_dict(data: dict) -> AppConfig:
             soft_hyphen_continuation=str(pdf_text["soft_hyphen_continuation"]),
         ),
         blocks=BlocksConfig(types=_normalize_block_types(blocks.get("types", {}))),
+        substitutions=SubstitutionsConfig(
+            rules=_parse_substitution_rules(data.get("substitutions", {}).get("rules", [])),
+        ),
     )
 
 

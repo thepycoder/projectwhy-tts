@@ -49,6 +49,7 @@ class PrefetchWarmer:
         pdf_scale: float,
         pdf_text: PdfTextConfig,
         should_speak: Callable[[Block], bool],
+        get_tts_text: Callable[[Block], str],
         page_lock: threading.Lock,
         cache: UtteranceCache,
         get_cursor: Callable[[], tuple[int, int, int]],
@@ -60,6 +61,7 @@ class PrefetchWarmer:
         self._pdf_scale = pdf_scale
         self._pdf_text = pdf_text
         self._should_speak = should_speak
+        self._get_tts_text = get_tts_text
         self._page_lock = page_lock
         self._cache = cache
         self._get_cursor = get_cursor
@@ -176,7 +178,8 @@ class PrefetchWarmer:
                 pages = self._document.pages
                 if tpi < len(pages) and tbi < len(pages[tpi].blocks):
                     block = pages[tpi].blocks[tbi]
-                    rows.append(WarmRow(tpi, tbi, block.block_type.value, self._cache.get(block) is not None))
+                    tts_text = self._get_tts_text(block)
+                    rows.append(WarmRow(tpi, tbi, block.block_type.value, self._cache.get(tts_text) is not None))
             with self._snapshot_lock:
                 self._snapshot = rows
 
@@ -193,8 +196,9 @@ class PrefetchWarmer:
                 if tpi >= len(pages) or tbi >= len(pages[tpi].blocks):
                     continue
                 block = pages[tpi].blocks[tbi]
+                tts_text = self._get_tts_text(block)
 
-                if self._cache.get(block) is not None:
+                if self._cache.get(tts_text) is not None:
                     # already cached — update snapshot if needed
                     with self._snapshot_lock:
                         if i < len(self._snapshot) and not self._snapshot[i].cached:
@@ -207,7 +211,7 @@ class PrefetchWarmer:
                     break
 
                 try:
-                    self._cache.get_or_synthesize(block)
+                    self._cache.get_or_synthesize(tts_text)
                 except Exception:
                     logger.exception("warmer: synthesis failed for block (%d, %d)", tpi, tbi)
                     continue

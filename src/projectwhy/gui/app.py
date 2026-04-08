@@ -14,11 +14,12 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
 )
 
-from projectwhy.config import AppConfig, save
+from projectwhy.config import AppConfig, SubstitutionRuleConfig, save
 from projectwhy.core.document import load_document
 from projectwhy.core.player import AudioPlayer
 from projectwhy.core.models import Block
 from projectwhy.core.session import ReadingSession, merged_block_config, speak_heuristic
+from projectwhy.core.substitutions import SubstitutionRule, parse_rules
 from projectwhy.core.tts.base import TTSEngine
 from projectwhy.gui.controls import ControlBar
 from projectwhy.gui.inspector.dock import InspectorDock
@@ -27,6 +28,39 @@ from projectwhy.gui.pdf_view import PDFView
 from projectwhy.gui.text_view import TextDocView
 
 logger = logging.getLogger(__name__)
+
+
+def _rules_from_config(rule_configs: list[SubstitutionRuleConfig]) -> list[SubstitutionRule]:
+    raw = [{"find": r.find, "replace": r.replace, "regex": r.regex} for r in rule_configs]
+    try:
+        return parse_rules(raw)
+    except ValueError:
+        logger.exception("invalid substitution rules in config — rules disabled")
+        return []
+
+
+def _load_sidecar_rules(doc_path: str) -> list[SubstitutionRule]:
+    """Load substitution rules from an optional sidecar file next to the document.
+
+    The sidecar file is named ``<doc_path>.projectwhy.toml`` and must contain
+    a ``[substitutions]`` section with the same ``rules`` shape as global config.
+    A missing file is silently ignored; a parse error is logged and yields no rules.
+    """
+    try:
+        import tomllib  # type: ignore[import]
+    except ModuleNotFoundError:
+        import tomli as tomllib  # type: ignore[no-redef]
+
+    sidecar = Path(doc_path + ".projectwhy.toml")
+    if not sidecar.exists():
+        return []
+    try:
+        data = tomllib.loads(sidecar.read_text(encoding="utf-8"))
+        raw = data.get("substitutions", {}).get("rules", [])
+        return parse_rules(raw)
+    except Exception:
+        logger.exception("failed to load sidecar %s — rules disabled", sidecar)
+        return []
 
 
 class MainWindow(QMainWindow):
@@ -91,6 +125,11 @@ class MainWindow(QMainWindow):
             return self.session.would_speak(block)
         return speak_heuristic(block, merged_block_config(self.cfg.blocks.types))
 
+    def _inspector_tts_text(self, block: Block) -> str:
+        if self.session is not None:
+            return self.session.get_tts_text_for_block(block)
+        return block.text
+
     def _create_menus(self) -> None:
         m = self.menuBar().addMenu("File")
         a_open = m.addAction("Open…")
@@ -105,7 +144,8 @@ class MainWindow(QMainWindow):
         self._inspector.visibilityChanged.connect(self._inspector_action.setChecked)
 
     def _menu_settings(self) -> None:
-        dlg = SettingsDialog(self.cfg, self)
+        doc_path = self.session.document.path if self.session else None
+        dlg = SettingsDialog(self.cfg, self, doc_path=doc_path)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         path = self._config_path or Path.cwd() / "config.toml"
@@ -123,6 +163,9 @@ class MainWindow(QMainWindow):
             )
             self.session.set_pdf_text(self.cfg.pdf_text)
             self.session.set_block_config(merged_block_config(self.cfg.blocks.types))
+            global_rules = _rules_from_config(self.cfg.substitutions.rules)
+            sidecar_rules = _load_sidecar_rules(self.session.document.path)
+            self.session.set_substitution_rules(global_rules + sidecar_rules)
         self._controls.set_playback_speed(self.cfg.reading.playback_speed)
 
     def _menu_open(self) -> None:
@@ -148,6 +191,10 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, "Open failed", str(e))
             return
 
+        global_rules = _rules_from_config(self.cfg.substitutions.rules)
+        sidecar_rules = _load_sidecar_rules(path)
+        merged_rules = global_rules + sidecar_rules
+
         self.session = ReadingSession(
             doc,
             self._pdf,
@@ -160,6 +207,7 @@ class MainWindow(QMainWindow):
             playback_speed=self.cfg.reading.playback_speed,
             pdf_text=self.cfg.pdf_text,
             block_config=merged_block_config(self.cfg.blocks.types),
+            substitution_rules=merged_rules,
         )
         self._last_poll_page = -1
         self._inspector.reset()
@@ -260,7 +308,9 @@ class MainWindow(QMainWindow):
         if self._inspector.isVisible():
             p = self.session.current_page()
             st = self.session.get_state()
-            self._inspector.update_page(p, st, speak_check=self._inspector_speak_check)
+            self._inspector.update_page(
+                p, st, speak_check=self._inspector_speak_check, tts_text_fn=self._inspector_tts_text
+            )
             if doc.doc_type == "pdf":
                 self._pdf_view.set_block_overlays(p.blocks, st.block_index)
 
@@ -291,7 +341,9 @@ class MainWindow(QMainWindow):
 
         if self._inspector.isVisible():
             page = self.session.current_page()
-            self._inspector.update_page(page, st, speak_check=self._inspector_speak_check)
+            self._inspector.update_page(
+                page, st, speak_check=self._inspector_speak_check, tts_text_fn=self._inspector_tts_text
+            )
             if doc.doc_type == "pdf":
                 self._pdf_view.set_block_overlays(page.blocks, st.block_index)
             w = self.session.warmer

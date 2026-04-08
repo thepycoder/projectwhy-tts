@@ -190,9 +190,8 @@ class TestUtteranceCache:
         lock = threading.Lock()
         cache = UtteranceCache(tts, lock, max_entries=10)
 
-        block = _block("hello world")
-        r1 = cache.get_or_synthesize(block)
-        r2 = cache.get_or_synthesize(block)
+        r1 = cache.get_or_synthesize("hello world")
+        r2 = cache.get_or_synthesize("hello world")
 
         assert r1 is r2  # same object from cache
         assert tts.synthesize.call_count == 1
@@ -206,8 +205,8 @@ class TestUtteranceCache:
         lock = threading.Lock()
         cache = UtteranceCache(tts, lock, max_entries=10)
 
-        r1 = cache.get_or_synthesize(_block("hello"))
-        r2 = cache.get_or_synthesize(_block("world"))
+        r1 = cache.get_or_synthesize("hello")
+        r2 = cache.get_or_synthesize("world")
 
         assert r1 is not r2
         assert tts.synthesize.call_count == 2
@@ -221,14 +220,14 @@ class TestUtteranceCache:
         lock = threading.Lock()
         cache = UtteranceCache(tts, lock, max_entries=2)
 
-        blocks = [_block(f"text{i}") for i in range(3)]
-        for b in blocks:
-            cache.get_or_synthesize(b)
+        texts = [f"text{i}" for i in range(3)]
+        for t in texts:
+            cache.get_or_synthesize(t)
 
         # max_entries=2: oldest (text0) should be evicted
-        assert cache.get(blocks[0]) is None
-        assert cache.get(blocks[1]) is not None
-        assert cache.get(blocks[2]) is not None
+        assert cache.get("text0") is None
+        assert cache.get("text1") is not None
+        assert cache.get("text2") is not None
 
     def test_clear_empties_cache(self):
         from projectwhy.core.utterance_cache import UtteranceCache
@@ -239,12 +238,11 @@ class TestUtteranceCache:
         lock = threading.Lock()
         cache = UtteranceCache(tts, lock, max_entries=10)
 
-        block = _block("hello")
-        cache.get_or_synthesize(block)
-        assert cache.get(block) is not None
+        cache.get_or_synthesize("hello")
+        assert cache.get("hello") is not None
 
         cache.clear()
-        assert cache.get(block) is None
+        assert cache.get("hello") is None
 
     def test_concurrent_same_key_deduplicates(self):
         """T1 synthesizes slowly; T2 starts mid-synthesis and should receive the same result."""
@@ -265,15 +263,14 @@ class TestUtteranceCache:
         lock = threading.Lock()
         cache = UtteranceCache(tts, lock, max_entries=10)
 
-        block = _block("shared text")
         results: list[TTSResult] = []
 
         def t1_worker():
-            results.append(cache.get_or_synthesize(block))
+            results.append(cache.get_or_synthesize("shared text"))
 
         def t2_worker():
             started.wait(timeout=5.0)  # wait until T1 has started synthesis
-            results.append(cache.get_or_synthesize(block))  # should deduplicate
+            results.append(cache.get_or_synthesize("shared text"))  # should deduplicate
 
         t1 = threading.Thread(target=t1_worker)
         t2 = threading.Thread(target=t2_worker)

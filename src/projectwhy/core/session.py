@@ -11,9 +11,10 @@ import pypdfium2 as pdfium
 
 from projectwhy.config import DEFAULT_PDF_TEXT, PdfTextConfig
 from projectwhy.core.document import ensure_pdf_page_loaded
-from projectwhy.core.models import BBox, Block, BlockType, Document, Page, ReadingState, TTSResult, WordPosition, WordTimestamp
+from projectwhy.core.models import BBox, Block, BlockType, Document, Page, ReadingState, TTSResult, WordTimestamp
 from projectwhy.core.player import AudioPlayer
 from projectwhy.core.prefetch import PrefetchWarmer
+from projectwhy.core.substitutions import SubstitutionRule, block_tts_parts, block_tts_text
 from projectwhy.core.time_stretch import time_stretch
 from projectwhy.core.tts.base import TTSEngine
 from projectwhy.core.utterance_cache import UtteranceCache
@@ -103,6 +104,7 @@ class ReadingSession:
         playback_speed: float = 1.0,
         pdf_text: PdfTextConfig | None = None,
         block_config: dict[BlockType, dict[str, Any]] | None = None,
+        substitution_rules: list[SubstitutionRule] | None = None,
     ) -> None:
         self.document = document
         self.pdf = pdf
@@ -112,6 +114,7 @@ class ReadingSession:
         self.pdf_scale = pdf_scale
         self._pdf_text = pdf_text or DEFAULT_PDF_TEXT
         self._block_config = block_config or merged_block_config({})
+        self._substitution_rules: list[SubstitutionRule] = substitution_rules or []
         self._prefetch_lookahead = prefetch_lookahead
         self._speed_lock = threading.Lock()
         self._playback_speed = float(playback_speed)
@@ -289,23 +292,28 @@ class ReadingSession:
         return float(cfg["pause_after"])
 
     @staticmethod
-    def _build_alignment(block_words: list[WordPosition], word_timestamps: list[WordTimestamp]) -> list[int]:
-        """Map each timestamp index to a block.words index via character offsets in space-joined text."""
-        if not block_words or not word_timestamps:
+    def _build_alignment(tts_parts: list[str], word_timestamps: list[WordTimestamp]) -> list[int]:
+        """Map each timestamp index to a block.words index via character offsets in the TTS string.
+
+        tts_parts[i] is the (possibly substituted) string for block.words[i], so word_starts
+        are computed from these parts rather than the raw PDF tokens. Kokoro tokens that expand
+        from a single word slot (e.g. "Carbon", "Dioxide" from "CO2") both map to the same index.
+        """
+        if not tts_parts or not word_timestamps:
             return []
 
         word_starts: list[int] = []
         pos = 0
-        for w in block_words:
+        for part in tts_parts:
             word_starts.append(pos)
-            pos += len(w.text) + 1
+            pos += len(part) + 1
 
-        block_text = " ".join(w.text for w in block_words)
+        tts_text = " ".join(tts_parts)
         mapping: list[int] = []
         search_from = 0
 
         for wt in word_timestamps:
-            tok_pos = block_text.find(wt.text, search_from)
+            tok_pos = tts_text.find(wt.text, search_from)
             if tok_pos < 0:
                 mapping.append(mapping[-1] if mapping else 0)
                 continue
@@ -401,9 +409,11 @@ class ReadingSession:
                     self.page_index, self.block_index = pos
                 continue
             block = page.blocks[bi]
+            tts_parts = block_tts_parts(block, self._substitution_rules)
+            tts_text = block_tts_text(tts_parts)
 
             try:
-                tts_result = self._tts_cache.get_or_synthesize(block)
+                tts_result = self._tts_cache.get_or_synthesize(tts_text)
             except Exception:
                 logger.exception("playback: synthesis failed for block (%d, %d)", pi, bi)
                 next_pos = self._find_speakable_at_or_after(pi, bi + 1)
@@ -426,7 +436,7 @@ class ReadingSession:
             self._current_alignment = None
 
             audio_out, sr_out, ts_out = self._prepare_playback_audio(tts_result)
-            alignment = self._build_alignment(block.words, tts_result.word_timestamps or [])
+            alignment = self._build_alignment(tts_parts, tts_result.word_timestamps or [])
             self._current_alignment = alignment
             self._current_timestamps = ts_out
 
@@ -491,6 +501,7 @@ class ReadingSession:
             pdf_scale=self.pdf_scale,
             pdf_text=self._pdf_text,
             should_speak=self._should_speak,
+            get_tts_text=self.get_tts_text_for_block,
             page_lock=self._page_lock,
             cache=self._tts_cache,
             get_cursor=self._get_cursor_snapshot,
@@ -555,6 +566,13 @@ class ReadingSession:
 
     def set_block_config(self, block_config: dict[BlockType, dict[str, Any]]) -> None:
         self._block_config = block_config
+
+    def set_substitution_rules(self, rules: list[SubstitutionRule]) -> None:
+        self._substitution_rules = rules
+        self._tts_cache.clear()
+
+    def get_tts_text_for_block(self, block: Block) -> str:
+        return block_tts_text(block_tts_parts(block, self._substitution_rules))
 
     def set_voice(self, voice: str) -> None:
         if hasattr(self.tts, "voice"):

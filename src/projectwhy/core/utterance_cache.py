@@ -8,7 +8,7 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass
 
-from projectwhy.core.models import Block, TTSResult
+from projectwhy.core.models import TTSResult
 from projectwhy.core.tts.base import TTSEngine
 
 logger = logging.getLogger(__name__)
@@ -47,27 +47,27 @@ class UtteranceCache:
 
     # -- public API ----------------------------------------------------------
 
-    def make_key(self, text: str) -> str:
+    def make_key(self, tts_text: str) -> str:
         voice = getattr(self._tts, "voice", "") or ""
-        raw = f"{voice}\x00{text.strip()}"
+        raw = f"{voice}\x00{tts_text.strip()}"
         return hashlib.sha1(raw.encode()).hexdigest()
 
-    def get(self, block: Block) -> TTSResult | None:
-        """Non-blocking lookup. Returns None if not yet cached."""
-        key = self.make_key(block.text)
+    def get(self, tts_text: str) -> TTSResult | None:
+        """Non-blocking lookup by pre-computed TTS string. Returns None if not cached."""
+        key = self.make_key(tts_text)
         with self._lock:
             result = self._ready.get(key)
             if result is not None:
                 self._ready.move_to_end(key)
             return result
 
-    def get_or_synthesize(self, block: Block) -> TTSResult:
+    def get_or_synthesize(self, tts_text: str) -> TTSResult:
         """Return cached result; synthesize (blocking) if missing.
 
         If another thread is already synthesizing the same key, this waits for
         that result rather than calling synthesize() a second time.
         """
-        key = self.make_key(block.text)
+        key = self.make_key(tts_text)
 
         with self._lock:
             if key in self._ready:
@@ -91,12 +91,12 @@ class UtteranceCache:
                     self._ready.move_to_end(key)
                     return self._ready[key]
             # Synthesizer failed — retry (will re-synthesize once, then succeed or raise)
-            return self.get_or_synthesize(block)
+            return self.get_or_synthesize(tts_text)
 
         # This thread is the synthesizer
         try:
             with self._tts_lock:
-                result = self._tts.synthesize(block.text)
+                result = self._tts.synthesize(tts_text)
         except Exception:
             with self._lock:
                 self._pending.pop(key, None)

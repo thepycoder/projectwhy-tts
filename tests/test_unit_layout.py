@@ -62,23 +62,20 @@ def test_assign_words_to_blocks_nearest_when_outside_all_boxes():
 
 
 def test_build_alignment_maps_tokens_to_word_indices():
-    bws = [
-        WordPosition("Hello", BBox(0, 0, 1, 1)),
-        WordPosition("world", BBox(0, 0, 1, 1)),
-    ]
+    parts = ["Hello", "world"]
     ts = [
         WordTimestamp("Hello", 0.0, 0.2),
         WordTimestamp("world", 0.2, 0.4),
     ]
-    m = ReadingSession._build_alignment(bws, ts)
+    m = ReadingSession._build_alignment(parts, ts)
     assert m == [0, 1]
 
 
 def test_build_alignment_reuses_previous_index_when_token_missing():
-    bws = [WordPosition("only", BBox(0, 0, 1, 1))]
+    parts = ["only"]
     ts = [
         WordTimestamp("only", 0.0, 0.2),
         WordTimestamp("ghost", 0.2, 0.4),
     ]
-    m = ReadingSession._build_alignment(bws, ts)
+    m = ReadingSession._build_alignment(parts, ts)
     assert m == [0, 0]

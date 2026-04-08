@@ -102,10 +102,14 @@ class DetailPanel(QWidget):
         lay = QVBoxLayout(self)
         self._header = QLabel()
         lay.addWidget(self._header)
-        lay.addWidget(QLabel("Block text (TTS input)"))
-        self._block_text = QTextEdit()
-        self._block_text.setReadOnly(True)
-        lay.addWidget(self._block_text)
+        lay.addWidget(QLabel("Raw text (from PDF)"))
+        self._raw_text = QTextEdit()
+        self._raw_text.setReadOnly(True)
+        lay.addWidget(self._raw_text)
+        lay.addWidget(QLabel("TTS input (after substitutions)"))
+        self._tts_text = QTextEdit()
+        self._tts_text.setReadOnly(True)
+        lay.addWidget(self._tts_text)
         lay.addWidget(QLabel("Words (order, text, bbox)"))
         self._words = QTextEdit()
         self._words.setReadOnly(True)
@@ -115,7 +119,13 @@ class DetailPanel(QWidget):
         self._last_page = -1
         self._last_block = -2
 
-    def update_page(self, page: Page, state: ReadingState) -> None:
+    def update_page(
+        self,
+        page: Page,
+        state: ReadingState,
+        *,
+        tts_text_fn: Callable[[Block], str] | None = None,
+    ) -> None:
         if state.page_index == self._last_page and state.block_index == self._last_block:
             return
         self._last_page = state.page_index
@@ -124,13 +134,16 @@ class DetailPanel(QWidget):
         bi = state.block_index
         if bi < 0 or bi >= len(page.blocks):
             self._header.setText("No block selected")
-            self._block_text.clear()
+            self._raw_text.clear()
+            self._tts_text.clear()
             self._words.clear()
             return
 
         block = page.blocks[bi]
         self._header.setText(f"Block #{bi} — {block.block_type.value}")
-        self._block_text.setPlainText(block.text)
+        self._raw_text.setPlainText(block.text)
+        tts_text = tts_text_fn(block) if tts_text_fn is not None else block.text
+        self._tts_text.setPlainText(tts_text)
 
         lines: list[str] = []
         for wi, w in enumerate(block.words):
@@ -222,9 +235,10 @@ class InspectorDock(QDockWidget):
         state: ReadingState,
         *,
         speak_check: Callable[[Block], bool],
+        tts_text_fn: Callable[[Block], str] | None = None,
     ) -> None:
         self._layout_panel.update_page(page, state, speak_check=speak_check)
-        self._detail.update_page(page, state)
+        self._detail.update_page(page, state, tts_text_fn=tts_text_fn)
 
     def update_pipeline(self, rows: list[WarmRow]) -> None:
         self._pipeline.update_jobs(rows)
