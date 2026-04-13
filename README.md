@@ -29,7 +29,7 @@ On some Linux CPU builds, Paddle oneDNN can fail; the example config sets `enabl
 
 - Python 3.11+
 - Audio device (speakers) for playback
-- [pytsmod](https://github.com/KAIST-MACLab/PyTSMod) (bundled) when using playback speed other than 1.0× for pitch-preserving tempo (WSOLA)
+- [Rubber Band](https://breakfastquay.com/rubberband/) via [pyrubberband](https://github.com/bmcfee/pyrubberband): install the **rubberband** CLI (e.g. Arch `rubberband`, Debian/Ubuntu `rubberband-cli`) so `rubberband` is on `PATH`, for playback speeds other than 1.0× (pitch-preserving tempo)
 - Optional: GPU for faster layout (`[layout] device = "gpu"`) and Kokoro TTS (CPU works for both)
 
 ## License

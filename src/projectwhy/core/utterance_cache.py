@@ -124,6 +124,11 @@ class UtteranceCache:
         with self._lock:
             self._ready.clear()
 
+    def replace_tts(self, tts: TTSEngine) -> None:
+        """Point the cache at a new engine and drop entries (e.g. after engine swap)."""
+        self._tts = tts
+        self.clear()
+
     def update_max_entries(self, n: int) -> None:
         with self._lock:
             self._max_entries = n

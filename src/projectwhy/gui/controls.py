@@ -71,8 +71,15 @@ class ControlBar(QWidget):
         self.page_edit.installEventFilter(self)
         self.btn_prev_block.clicked.connect(self.prev_block_clicked.emit)
         self.btn_next_block.clicked.connect(self.next_block_clicked.emit)
-        self.voice.currentTextChanged.connect(self.voice_changed.emit)
+        self.voice.currentIndexChanged.connect(self._emit_voice_changed)
         self.speed.currentIndexChanged.connect(self._on_speed_index)
+
+    def _emit_voice_changed(self, _idx: int | None = None) -> None:
+        data = self.voice.currentData()
+        if data is not None:
+            self.voice_changed.emit(str(data))
+        else:
+            self.voice_changed.emit(self.voice.currentText())
 
     def _on_speed_index(self, _idx: int) -> None:
         s = float(self.speed.currentData())
@@ -108,12 +115,26 @@ class ControlBar(QWidget):
             return
         self.page_jump_requested.emit(n - 1)
 
-    def set_voices(self, names: list[str], current: str | None = None) -> None:
+    def set_voices(
+        self,
+        names: list[str],
+        current: str | None = None,
+        *,
+        voice_values: list[str] | None = None,
+    ) -> None:
         self.voice.blockSignals(True)
         self.voice.clear()
-        self.voice.addItems(names)
-        if current and current in names:
-            self.voice.setCurrentText(current)
+        if voice_values is not None and len(voice_values) == len(names):
+            for label, value in zip(names, voice_values):
+                self.voice.addItem(label, value)
+            if current:
+                idx = self.voice.findData(current)
+                if idx >= 0:
+                    self.voice.setCurrentIndex(idx)
+        else:
+            self.voice.addItems(names)
+            if current and current in names:
+                self.voice.setCurrentText(current)
         self.voice.blockSignals(False)
 
     def set_page_indicator(self, idx: int, total: int) -> None:

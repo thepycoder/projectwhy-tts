@@ -1,27 +1,33 @@
-"""Pitch-preserving tempo change via WSOLA (pytsmod), tuned for speech-like audio."""
+"""Pitch-preserving tempo change via Rubber Band (pyrubberband + CLI)."""
 
 from __future__ import annotations
 
 import numpy as np
-import pytsmod as tsm
+import pyrubberband as pyrb
 
 
-def time_stretch(audio: np.ndarray, _sample_rate: int, speed: float) -> np.ndarray:
+def time_stretch(audio: np.ndarray, sample_rate: int, speed: float) -> np.ndarray:
     """Return audio played at *speed*× tempo with pitch preserved.
 
     *speed* > 1 shortens duration (faster). *speed* == 1 returns a float32 copy.
 
-    Uses waveform-similarity overlap-add (WSOLA) instead of a phase vocoder, which
-    tends to avoid the smeared / “echoey” character phase methods add on TTS.
-    *_sample_rate* is reserved for API compatibility with the session.
+    Uses the Rubber Band library (R3 / ``--fine`` engine) for time stretch; requires
+    the ``rubberband`` executable on ``PATH`` (e.g. distro package ``rubberband-cli``).
     """
     y = np.asarray(audio, dtype=np.float32).reshape(-1)
     if y.size == 0:
         return y
     if abs(float(speed) - 1.0) < 1e-6:
         return y.astype(np.float32, copy=False)
-    # pytsmod: s > 1 lengthens (slower playback); our speed > 1 means faster → shorter.
-    s = 1.0 / float(speed)
-    y64 = y.astype(np.float64, copy=False).reshape(1, -1)
-    out = tsm.wsola(y64, s=s)
-    return np.asarray(out, dtype=np.float32).reshape(-1)
+    sr = int(sample_rate)
+    if sr <= 0:
+        raise ValueError("sample_rate must be positive for time stretch")
+    return np.asarray(
+        pyrb.time_stretch(
+            y,
+            sr,
+            float(speed),
+            rbargs={"--fine": ""},
+        ),
+        dtype=np.float32,
+    ).reshape(-1)

@@ -13,6 +13,12 @@ model = "tts-1"
 voice = "alloy"
 format = "mp3"
 
+[tts.mistral]
+api_key = ""
+model = "voxtral-mini-tts-2603"
+voice_id = ""
+format = "wav"
+
 [layout]
 # PP-DocLayout-S, PP-DocLayout-M, or PP-DocLayout-L
 model_name = "PP-DocLayout-M"
@@ -28,12 +34,14 @@ enable_mkldnn = false
 [display]
 pdf_scale = 2.0
 highlight_color = [255, 200, 0, 128]
+# "word" = word highlight when TTS provides timestamps; "block" = always block-level (PDF hover + click too)
+highlight_granularity = "word"
 
 # Playback: TTS audio cache size, speakable-block lookahead, and tempo (also in Settings…)
 [reading]
 tts_cache_max_entries = 64
 prefetch_lookahead = 3
-# 0.5–2.0 in 0.25 steps; WSOLA pitch-preserving time stretch when not 1.0
+# 0.5–2.0 in 0.25 steps; Rubber Band pitch-preserving time stretch when not 1.0
 playback_speed = 1.0
 
 [pdf_text]

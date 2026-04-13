@@ -9,7 +9,7 @@ from typing import Any
 import numpy as np
 import pypdfium2 as pdfium
 
-from projectwhy.config import DEFAULT_PDF_TEXT, PdfTextConfig
+from projectwhy.config import DEFAULT_PDF_TEXT, PdfTextConfig, normalize_highlight_granularity
 from projectwhy.core.document import ensure_pdf_page_loaded
 from projectwhy.core.models import BBox, Block, BlockType, Document, Page, ReadingState, TTSResult, WordTimestamp
 from projectwhy.core.player import AudioPlayer
@@ -105,6 +105,7 @@ class ReadingSession:
         pdf_text: PdfTextConfig | None = None,
         block_config: dict[BlockType, dict[str, Any]] | None = None,
         substitution_rules: list[SubstitutionRule] | None = None,
+        highlight_granularity: str = "word",
     ) -> None:
         self.document = document
         self.pdf = pdf
@@ -115,6 +116,7 @@ class ReadingSession:
         self._pdf_text = pdf_text or DEFAULT_PDF_TEXT
         self._block_config = block_config or merged_block_config({})
         self._substitution_rules: list[SubstitutionRule] = substitution_rules or []
+        self._highlight_granularity = normalize_highlight_granularity(highlight_granularity)
         self._prefetch_lookahead = prefetch_lookahead
         self._speed_lock = threading.Lock()
         self._playback_speed = float(playback_speed)
@@ -286,6 +288,36 @@ class ReadingSession:
             self.play()
         return True
 
+    def play_from_pdf_block(self, page_index: int, block_index: int) -> bool:
+        """Move to the given block and start playback from the start of the utterance (PDF only)."""
+        if self.document.doc_type != "pdf":
+            return False
+        page = self._ensure_page(page_index)
+        if block_index >= len(page.blocks):
+            return False
+        block = page.blocks[block_index]
+        if not self._should_speak(block):
+            return False
+
+        if self._paused:
+            self._paused = False
+            self._resume_event.set()
+
+        with self._cursor_lock:
+            self._cursor_gen += 1
+            self.page_index = page_index
+            self.block_index = block_index
+            self._pending_word_seek = None
+        if self.warmer is not None:
+            self.warmer.notify()
+        self._ensure_neighbor_pages()
+
+        if self._worker is not None and self._worker.is_alive():
+            self.interrupt_playback()
+        else:
+            self.play()
+        return True
+
     # -- page navigation -----------------------------------------------------
 
     def go_to_page(self, page_index: int) -> Page:
@@ -405,7 +437,7 @@ class ReadingSession:
     def _prepare_playback_audio(
         self, result: TTSResult
     ) -> tuple[np.ndarray, int, list[WordTimestamp] | None]:
-        """WSOLA time-stretch and timestamps aligned to the played buffer."""
+        """Rubber Band time-stretch and timestamps aligned to the played buffer."""
         if result is None or result.audio is None or len(result.audio) == 0:
             return np.array([], dtype=np.float32), 24000, None
         with self._speed_lock:
@@ -657,6 +689,14 @@ class ReadingSession:
         self._substitution_rules = rules
         self._tts_cache.clear()
 
+    def set_highlight_granularity(self, mode: str) -> None:
+        self._highlight_granularity = normalize_highlight_granularity(mode)
+
+    def set_tts_engine(self, tts: TTSEngine) -> None:
+        self.stop()
+        self.tts = tts
+        self._tts_cache.replace_tts(tts)
+
     def get_tts_text_for_block(self, block: Block) -> str:
         return block_tts_text(block_tts_parts(block, self._substitution_rules))
 
@@ -674,7 +714,11 @@ class ReadingSession:
 
     def get_state(self) -> ReadingState:
         pos = self.player.get_position_sec()
-        wi = self._word_index_for_position(pos)
+        wi = (
+            None
+            if self._highlight_granularity == "block"
+            else self._word_index_for_position(pos)
+        )
         playing = not self._paused and (self.player.is_playing() or self.is_active)
         return ReadingState(
             page_index=self.page_index,
@@ -712,6 +756,9 @@ class ReadingSession:
         cursor_block = self.get_cursor_block()
         if cursor_block is None:
             return None
+
+        if self._highlight_granularity == "block":
+            return cursor_block.bbox
 
         # Word-level tracking only when audio is playing for exactly the cursor block
         if (

@@ -16,7 +16,8 @@ from PyQt6.QtWidgets import (
 )
 
 from projectwhy.core.models import BBox, Block
-from projectwhy.core.pdf import word_bbox_at_blocks_point
+from projectwhy.config import normalize_highlight_granularity
+from projectwhy.core.pdf import block_bbox_at_blocks_point, word_bbox_at_blocks_point
 from projectwhy.gui.inspector.colors import rgb_for_block_type
 
 
@@ -55,6 +56,7 @@ class PDFView(QGraphicsView):
         self._show_overlays: bool = False
         self._overlay_items: list = []
         self._hover_blocks: list[Block] = []
+        self._hover_granularity = "word"
 
         self._left_press_viewport: QPointF | None = None
         self._left_pan_active = False
@@ -72,6 +74,11 @@ class PDFView(QGraphicsView):
     def set_hover_blocks(self, blocks: list[Block]) -> None:
         """Blocks on the current page (page-image word bboxes) used for hover hit-testing."""
         self._hover_blocks = list(blocks)
+
+    def set_hover_granularity(self, mode: str) -> None:
+        """``word`` = hover word bbox; ``block`` = hover whole layout block bbox."""
+        self._hover_granularity = normalize_highlight_granularity(mode)
+        self._clear_hover()
 
     def set_highlight_color(self, rgba: list[int] | tuple[int, int, int, int]) -> None:
         """RGBA fill for word highlight; pen is slightly darker/orange."""
@@ -178,7 +185,10 @@ class PDFView(QGraphicsView):
         if coords is None:
             self._clear_hover()
             return
-        bbox = word_bbox_at_blocks_point(self._hover_blocks, coords[0], coords[1])
+        if self._hover_granularity == "block":
+            bbox = block_bbox_at_blocks_point(self._hover_blocks, coords[0], coords[1])
+        else:
+            bbox = word_bbox_at_blocks_point(self._hover_blocks, coords[0], coords[1])
         if bbox is None:
             self._clear_hover()
             return

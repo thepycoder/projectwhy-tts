@@ -22,6 +22,7 @@ from projectwhy.gui.settings.pages import (
     PdfTextSettingsPage,
     PlaybackSettingsPage,
     SubstitutionsSettingsPage,
+    VoiceSpeechSettingsPage,
 )
 
 
@@ -77,6 +78,7 @@ class SettingsDialog(QDialog):
         """Register new settings sections here (order = sidebar order)."""
         return [
             PlaybackSettingsPage(),
+            VoiceSpeechSettingsPage(),
             BlockTypesSettingsPage(),
             PdfTextSettingsPage(),
             SubstitutionsSettingsPage(doc_path=self._doc_path),

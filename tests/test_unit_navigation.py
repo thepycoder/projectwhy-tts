@@ -10,7 +10,11 @@ import numpy as np
 import pytest
 
 from projectwhy.core.models import BBox, Block, BlockType, Document, Page, TTSResult, WordPosition, WordTimestamp
-from projectwhy.core.pdf import word_bbox_at_blocks_point, word_hit_at_page_point
+from projectwhy.core.pdf import (
+    block_hit_at_page_point,
+    word_bbox_at_blocks_point,
+    word_hit_at_page_point,
+)
 from projectwhy.core.session import ReadingSession
 
 
@@ -40,7 +44,9 @@ def _tts_result(text: str = "x") -> TTSResult:
     return TTSResult(audio=audio, sample_rate=24000, word_timestamps=ts)
 
 
-def _make_session(doc: Document, tts=None, player=None) -> ReadingSession:
+def _make_session(
+    doc: Document, tts=None, player=None, *, highlight_granularity: str = "word"
+) -> ReadingSession:
     tts = tts or MagicMock()
     tts.get_voices.return_value = []
     tts.synthesize.return_value = _tts_result()
@@ -56,6 +62,7 @@ def _make_session(doc: Document, tts=None, player=None) -> ReadingSession:
         layout_model=None,
         tts_cache_max_entries=64,
         prefetch_lookahead=2,
+        highlight_granularity=highlight_granularity,
     )
 
 
@@ -508,3 +515,23 @@ class TestWordSeekHelpers:
         assert bb is not None
         assert bb.x1 == 10 and bb.y1 == 10
         assert word_bbox_at_blocks_point([], 15, 15) is None
+
+    def test_block_hit_at_page_point(self) -> None:
+        b0 = Block(BlockType.TEXT, "a", BBox(0, 0, 50, 50), words=[])
+        b1 = Block(BlockType.TEXT, "b", BBox(60, 0, 110, 50), words=[])
+        p = Page(0, [b0, b1])
+        assert block_hit_at_page_point(p, 25, 25) == 0
+        assert block_hit_at_page_point(p, 80, 25) == 1
+        assert block_hit_at_page_point(p, 55, 25) is None
+
+    def test_block_hit_later_block_wins_overlap(self) -> None:
+        b0 = Block(BlockType.TEXT, "a", BBox(0, 0, 100, 100), words=[])
+        b1 = Block(BlockType.TEXT, "b", BBox(40, 40, 60, 60), words=[])
+        p = Page(0, [b0, b1])
+        assert block_hit_at_page_point(p, 50, 50) == 1
+
+    def test_get_state_block_granularity_hides_word_index(self) -> None:
+        doc = _doc([_block("hello")])
+        s = _make_session(doc, highlight_granularity="block")
+        s.go_to_page(0)
+        assert s.get_state().word_index is None

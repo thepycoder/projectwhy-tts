@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,12 @@ import tomli_w
 from projectwhy.core.playback_speed import clamp_playback_speed
 
 
+def normalize_highlight_granularity(raw: str) -> str:
+    """Return ``word`` or ``block`` (default ``word``)."""
+    v = (raw or "word").strip().lower()
+    return "block" if v == "block" else "word"
+
+
 @dataclass
 class OpenAIConfig:
     api_key: str
@@ -26,11 +33,20 @@ class OpenAIConfig:
 
 
 @dataclass
+class MistralConfig:
+    api_key: str
+    model: str
+    voice_id: str
+    format: str
+
+
+@dataclass
 class TTSConfig:
     engine: str
     voice: str
     device: str
     openai: OpenAIConfig
+    mistral: MistralConfig
 
 
 @dataclass
@@ -47,6 +63,7 @@ class LayoutConfig:
 class DisplayConfig:
     pdf_scale: float
     highlight_color: list[int]
+    highlight_granularity: str
 
 
 @dataclass
@@ -134,6 +151,7 @@ def _parse_substitution_rules(raw: Any) -> list[SubstitutionRuleConfig]:
 def _config_from_toml_dict(data: dict) -> AppConfig:
     t = data["tts"]
     o = t["openai"]
+    m = t["mistral"]
     layout = data["layout"]
     display = data["display"]
     reading = data["reading"]
@@ -151,6 +169,12 @@ def _config_from_toml_dict(data: dict) -> AppConfig:
                 voice=o["voice"],
                 format=o["format"],
             ),
+            mistral=MistralConfig(
+                api_key=m["api_key"],
+                model=m["model"],
+                voice_id=m["voice_id"],
+                format=m["format"],
+            ),
         ),
         layout=LayoutConfig(
             model_name=layout["model_name"],
@@ -163,6 +187,7 @@ def _config_from_toml_dict(data: dict) -> AppConfig:
         display=DisplayConfig(
             pdf_scale=display["pdf_scale"],
             highlight_color=display["highlight_color"],
+            highlight_granularity=normalize_highlight_granularity(str(display["highlight_granularity"])),
         ),
         reading=ReadingConfig(
             tts_cache_max_entries=reading["tts_cache_max_entries"],
@@ -187,12 +212,66 @@ def load(path: str | Path) -> AppConfig:
     return _config_from_toml_dict(data)
 
 
+def _toml_basic_str_unicode_escapes(s: str) -> str:
+    """TOML double-quoted string: BMP code points as ``\\uXXXX`` (one char for pdf_text keys)."""
+    if not s:
+        return '""'
+    c = s[0]
+    o = ord(c)
+    if o <= 0xFFFF:
+        return f'"\\u{o:04x}"'
+    return f'"\\U{o:08x}"'
+
+
+def _rewrite_pdf_text_section(content: str, cfg: AppConfig) -> str:
+    """Replace ``[pdf_text]`` assignments so markers are written as ``\\u`` escapes, not raw UTF-8."""
+    lines = content.splitlines(keepends=True)
+    out: list[str] = []
+    i = 0
+    n = len(lines)
+    while i < n:
+        line = lines[i]
+        if line.strip() == "[pdf_text]":
+            out.append(line)
+            i += 1
+            others: list[str] = []
+            while i < n:
+                raw = lines[i]
+                sl = raw.strip()
+                if not sl:
+                    out.append(raw)
+                    i += 1
+                    break
+                if sl.startswith("["):
+                    break
+                if sl.startswith("line_break_marker") or sl.startswith("soft_hyphen_continuation"):
+                    i += 1
+                    continue
+                others.append(raw)
+                i += 1
+            out.append(
+                f"line_break_marker = {_toml_basic_str_unicode_escapes(cfg.pdf_text.line_break_marker)}\n",
+            )
+            out.append(
+                f"soft_hyphen_continuation = "
+                f"{_toml_basic_str_unicode_escapes(cfg.pdf_text.soft_hyphen_continuation)}\n",
+            )
+            out.extend(others)
+            continue
+        out.append(line)
+        i += 1
+    return "".join(out)
+
+
 def save(path: str | Path, cfg: AppConfig) -> None:
     """Write *cfg* to TOML at *path* (overwrites)."""
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("wb") as f:
-        tomli_w.dump(asdict(cfg), f)
+    buf = io.BytesIO()
+    tomli_w.dump(asdict(cfg), buf)
+    text = buf.getvalue().decode("utf-8")
+    text = _rewrite_pdf_text_section(text, cfg)
+    p.write_text(text, encoding="utf-8")
 
 
 # Backward-compatible names

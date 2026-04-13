@@ -52,7 +52,7 @@ class PlaybackSettingsPage:
         for sp in PLAYBACK_SPEED_CHOICES:
             self._playback_speed.addItem(f"{sp:.2f}x", sp)
         self._playback_speed.setToolTip(
-            "Tempo multiplier for spoken audio (pitch preserved via WSOLA). "
+            "Tempo multiplier for spoken audio (pitch preserved via Rubber Band). "
             "Steps from 0.5x to 2x in 0.25 increments."
         )
         form.addRow("Playback speed:", self._playback_speed)

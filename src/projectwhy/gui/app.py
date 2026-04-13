@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 
 from projectwhy.config import AppConfig, SubstitutionRuleConfig, save
 from projectwhy.core.document import load_document
-from projectwhy.core.pdf import word_hit_at_page_point
+from projectwhy.core.pdf import block_hit_at_page_point, word_hit_at_page_point
 from projectwhy.core.player import AudioPlayer
 from projectwhy.core.models import Block
 from projectwhy.core.session import ReadingSession, merged_block_config, speak_heuristic
@@ -29,6 +29,24 @@ from projectwhy.gui.pdf_view import PDFView
 from projectwhy.gui.text_view import TextDocView
 
 logger = logging.getLogger(__name__)
+
+
+def _tts_config_fingerprint(cfg: AppConfig) -> tuple:
+    m, o = cfg.tts.mistral, cfg.tts.openai
+    return (
+        cfg.tts.engine,
+        cfg.tts.voice,
+        cfg.tts.device,
+        o.api_key,
+        o.base_url,
+        o.model,
+        o.voice,
+        o.format,
+        m.api_key,
+        m.model,
+        m.voice_id,
+        m.format,
+    )
 
 
 def _rules_from_config(rule_configs: list[SubstitutionRuleConfig]) -> list[SubstitutionRule]:
@@ -89,13 +107,14 @@ class MainWindow(QMainWindow):
 
         self._pdf_view = PDFView()
         self._pdf_view.setStatusTip("Click a word to start reading; drag to pan the page")
+        self._pdf_view.set_hover_granularity(self.cfg.display.highlight_granularity)
         self._pdf_view.word_clicked.connect(self._on_pdf_word_click)
         self._text_view = TextDocView()
         self._stack.addWidget(self._pdf_view)
         self._stack.addWidget(self._text_view)
 
         self._controls = ControlBar()
-        self._controls.set_voices(tts.get_voices(), getattr(tts, "voice", None))
+        self._apply_voice_combo(tts)
         self._controls.set_playback_speed(cfg.reading.playback_speed)
         self.statusBar().addPermanentWidget(self._controls, stretch=1)
 
@@ -106,7 +125,7 @@ class MainWindow(QMainWindow):
         self._controls.page_jump_requested.connect(self._on_page_jump)
         self._controls.prev_block_clicked.connect(self._on_prev_block)
         self._controls.next_block_clicked.connect(self._on_next_block)
-        self._controls.voice_changed.connect(self._on_voice)
+        self._controls.voice_changed.connect(self._on_voice_changed)
         self._controls.speed_changed.connect(self._on_speed)
 
         self._poll = QTimer(self)
@@ -148,6 +167,7 @@ class MainWindow(QMainWindow):
 
     def _menu_settings(self) -> None:
         doc_path = self.session.document.path if self.session else None
+        tts_fp_before = _tts_config_fingerprint(self.cfg)
         dlg = SettingsDialog(self.cfg, self, doc_path=doc_path)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
@@ -169,7 +189,15 @@ class MainWindow(QMainWindow):
             global_rules = _rules_from_config(self.cfg.substitutions.rules)
             sidecar_rules = _load_sidecar_rules(self.session.document.path)
             self.session.set_substitution_rules(global_rules + sidecar_rules)
+            self.session.set_highlight_granularity(self.cfg.display.highlight_granularity)
+        self._pdf_view.set_hover_granularity(self.cfg.display.highlight_granularity)
         self._controls.set_playback_speed(self.cfg.reading.playback_speed)
+
+        if _tts_config_fingerprint(self.cfg) != tts_fp_before:
+            self.tts = create_tts(self.cfg)
+            if self.session:
+                self.session.set_tts_engine(self.tts)
+            self._apply_voice_combo(self.tts)
 
     def _menu_open(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -211,6 +239,7 @@ class MainWindow(QMainWindow):
             pdf_text=self.cfg.pdf_text,
             block_config=merged_block_config(self.cfg.blocks.types),
             substitution_rules=merged_rules,
+            highlight_granularity=self.cfg.display.highlight_granularity,
         )
         self._last_poll_page = -1
         self._inspector.reset()
@@ -236,6 +265,19 @@ class MainWindow(QMainWindow):
             self._text_view.set_document_text(text, p.blocks)
 
         self._poll.start()
+        if doc.doc_type == "pdf":
+            self._pdf_view.set_hover_granularity(self.cfg.display.highlight_granularity)
+
+    def _apply_voice_combo(self, tts: TTSEngine) -> None:
+        names = tts.get_voices()
+        labels = getattr(tts, "voice_labels", None)
+        if callable(labels):
+            labels = labels()
+        current = getattr(tts, "voice", None)
+        if labels is not None and len(labels) == len(names) and names:
+            self._controls.set_voices(labels, current=current, voice_values=names)
+        else:
+            self._controls.set_voices(names, current=current)
 
     def _on_pdf_word_click(self, x: float, y: float) -> None:
         if not self.session or self.session.document.doc_type != "pdf":
@@ -245,6 +287,12 @@ class MainWindow(QMainWindow):
             return
         w, h = p.image.size
         if not (0 <= x < w and 0 <= y < h):
+            return
+        if self.cfg.display.highlight_granularity == "block":
+            bi = block_hit_at_page_point(p, x, y)
+            if bi is None:
+                return
+            self.session.play_from_pdf_block(self.session.page_index, bi)
             return
         hit = word_hit_at_page_point(p, x, y)
         if hit is None:
@@ -300,7 +348,13 @@ class MainWindow(QMainWindow):
             self.session.interrupt_playback()
         self._refresh_page_view()
 
-    def _on_voice(self, v: str) -> None:
+    def _on_voice_changed(self, v: str) -> None:
+        if self.cfg.tts.engine == "mistral":
+            self.cfg.tts.mistral.voice_id = v
+        elif self.cfg.tts.engine == "openai":
+            self.cfg.tts.openai.voice = v
+        else:
+            self.cfg.tts.voice = v
         if self.session:
             self.session.set_voice(v)
 
@@ -395,6 +449,16 @@ def create_tts(cfg: AppConfig):
             model=cfg.tts.openai.model,
             voice=cfg.tts.openai.voice,
             response_format=cfg.tts.openai.format,
+        )
+    if cfg.tts.engine == "mistral":
+        from projectwhy.core.tts.mistral_voxtral_tts import MistralVoxtralTTS
+
+        m = cfg.tts.mistral
+        return MistralVoxtralTTS(
+            api_key=m.api_key,
+            model=m.model,
+            voice_id=m.voice_id,
+            response_format=m.format,
         )
     from projectwhy.core.tts.kokoro_tts import KokoroTTS
 

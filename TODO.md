@@ -10,5 +10,5 @@
 - [x] Jump back and forward in yolo blocks from GUI
 - [x] Custom dictionary / substitutions
 - [x] Skipping UI for specific layout block types (need mayor settings plan)
-- [ ] Add custom API options for TTS (OpenAI, Mistral)
+- [x] Add custom API options for TTS (OpenAI, Mistral)
 - [x] Line break chars in pdf.py and layout.py hardcoded. Should be user settings

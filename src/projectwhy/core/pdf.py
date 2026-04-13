@@ -132,3 +132,26 @@ def word_bbox_at_blocks_point(blocks: list[Block], x: float, y: float) -> BBox |
         return None
     bi, wi = hit
     return blocks[bi].words[wi].bbox
+
+
+def block_hit_at_page_point(page: Page, x: float, y: float) -> int | None:
+    """Return block index whose ``block.bbox`` contains *(x, y)*, or ``None``.
+
+    Later blocks win on overlap (same tie-break as word hit-testing).
+    """
+    hit: int | None = None
+    for bi, block in enumerate(page.blocks):
+        bb = block.bbox
+        if bb.x1 <= x <= bb.x2 and bb.y1 <= y <= bb.y2:
+            hit = bi
+    return hit
+
+
+def block_bbox_at_blocks_point(blocks: list[Block], x: float, y: float) -> BBox | None:
+    """BBox of the topmost block under *(x, y)* in page-image space, or ``None``."""
+    if not blocks:
+        return None
+    bi = block_hit_at_page_point(Page(0, blocks), x, y)
+    if bi is None:
+        return None
+    return blocks[bi].bbox
