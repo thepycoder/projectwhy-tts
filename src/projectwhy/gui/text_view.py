@@ -244,6 +244,18 @@ class TextDocView(QWidget):
         if len(self._block_spans) != len(self._blocks):
             self._block_spans = []
 
+    def _scroll_cursor_to_viewport_ratio(self, cursor: QTextCursor, ratio_from_top: float) -> None:
+        """Scroll so *cursor* sits near ``ratio_from_top`` of the viewport height."""
+        sb = self._browser.verticalScrollBar()
+        if sb is None:
+            return
+        ratio = max(0.0, min(1.0, float(ratio_from_top)))
+        rect = self._browser.cursorRect(cursor)
+        viewport_h = self._browser.viewport().height()
+        doc_y = sb.value() + rect.top()
+        target = int(doc_y - (viewport_h * ratio))
+        sb.setValue(max(0, min(target, sb.maximum())))
+
     def highlight_word_in_block(
         self,
         block: Block | None,
@@ -293,8 +305,9 @@ class TextDocView(QWidget):
             hcur.setPosition(block_end, QTextCursor.MoveMode.KeepAnchor)
             hcur.mergeCharFormat(self._fmt)
             if scroll_into_view:
-                self._browser.setTextCursor(hcur)
-                self._browser.ensureCursorVisible()
+                scroll_cur = QTextCursor(self._browser.document())
+                scroll_cur.setPosition(block_start)
+                self._scroll_cursor_to_viewport_ratio(scroll_cur, 0.25)
             return
 
         if word_index >= len(block.words):
@@ -321,5 +334,6 @@ class TextDocView(QWidget):
         hcur.setPosition(found_at + len(needle), QTextCursor.MoveMode.KeepAnchor)
         hcur.mergeCharFormat(self._fmt)
         if scroll_into_view:
-            self._browser.setTextCursor(hcur)
-            self._browser.ensureCursorVisible()
+            scroll_cur = QTextCursor(self._browser.document())
+            scroll_cur.setPosition(found_at)
+            self._scroll_cursor_to_viewport_ratio(scroll_cur, 0.25)

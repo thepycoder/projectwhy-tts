@@ -100,6 +100,7 @@ class MainWindow(QMainWindow):
         self.session: ReadingSession | None = None
         self._pdf = None
         self._last_poll_page: int = -1
+        self._last_epub_focus: tuple[int, int] | None = None
 
         self.setWindowTitle("projectwhy-tts")
         self._stack = QStackedWidget()
@@ -271,6 +272,7 @@ class MainWindow(QMainWindow):
             highlight_granularity=self.cfg.display.highlight_granularity,
         )
         self._last_poll_page = -1
+        self._last_epub_focus = None
         self._inspector.reset()
 
         total = len(doc.pages)
@@ -446,21 +448,25 @@ class MainWindow(QMainWindow):
             page = self.session.current_page()
             self._pdf_view.set_hover_blocks(page.blocks)
             self._pdf_view.set_highlight_bbox(bbox)
+            self._last_epub_focus = None
         else:
+            focus = (st.page_index, st.block_index)
+            recenter = focus != self._last_epub_focus
             if st.is_playing:
                 self._text_view.highlight_word_in_block(
                     block,
                     st.word_index,
                     block_index=st.block_index,
-                    scroll_into_view=True,
+                    scroll_into_view=recenter,
                 )
             else:
                 self._text_view.highlight_word_in_block(
                     self.session.get_cursor_block(),
                     None,
                     block_index=st.block_index,
-                    scroll_into_view=False,
+                    scroll_into_view=recenter,
                 )
+            self._last_epub_focus = focus
 
         if self._inspector.isVisible():
             page = self.session.current_page()

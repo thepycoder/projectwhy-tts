@@ -2068,7 +2068,9 @@ dependencies = [
     { name = "huggingface-hub" },
     { name = "kokoro" },
     { name = "misaki", extra = ["en"] },
+    { name = "mistralai" },
     { name = "numpy" },
+    { name = "openai" },
     { name = "paddleocr" },
     { name = "paddlepaddle" },
     { name = "pillow" },
@@ -2079,14 +2081,6 @@ dependencies = [
     { name = "sounddevice" },
     { name = "spacy" },
     { name = "tomli-w" },
-]
-
-[package.optional-dependencies]
-mistral = [
-    { name = "mistralai" },
-]
-openai = [
-    { name = "openai" },
 ]
 
 [package.dev-dependencies]
@@ -2102,9 +2096,9 @@ requires-dist = [
     { name = "huggingface-hub", specifier = ">=0.20" },
     { name = "kokoro", specifier = ">=0.9" },
     { name = "misaki", extras = ["en"], specifier = ">=0.8" },
-    { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=1.5.0" },
+    { name = "mistralai", specifier = ">=1.5.0" },
     { name = "numpy", specifier = ">=1.26" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=1.0" },
+    { name = "openai", specifier = ">=1.0" },
     { name = "paddleocr", specifier = ">=3.0.0" },
     { name = "paddlepaddle", specifier = ">=3.0.0" },
     { name = "pillow", specifier = ">=10" },
@@ -2116,7 +2110,6 @@ requires-dist = [
     { name = "spacy", specifier = ">=3.7" },
     { name = "tomli-w", specifier = ">=1.2.0" },
 ]
-provides-extras = ["openai", "mistral"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "pytest", specifier = ">=8" }]
