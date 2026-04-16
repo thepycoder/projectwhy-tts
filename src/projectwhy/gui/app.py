@@ -20,6 +20,7 @@ from projectwhy.core.pdf import block_hit_at_page_point, word_hit_at_page_point
 from projectwhy.core.player import AudioPlayer
 from projectwhy.core.models import Block
 from projectwhy.core.session import ReadingSession, merged_block_config, speak_heuristic
+from projectwhy.core.sidecar import load_reading_position, save_reading_position
 from projectwhy.core.substitutions import SubstitutionRule, parse_rules
 from projectwhy.core.tts.base import TTSEngine
 from projectwhy.gui.controls import ControlBar
@@ -241,6 +242,7 @@ class MainWindow(QMainWindow):
 
     def open_path(self, path: str) -> None:
         if self.session:
+            self._save_reading_position()
             self.session.stop()
         try:
             if self._pdf is not None:
@@ -282,7 +284,11 @@ class MainWindow(QMainWindow):
             self._controls.set_epub_font_controls_visible(False)
             self._stack.setCurrentWidget(self._pdf_view)
             try:
-                self.session.go_to_page(0)
+                saved = load_reading_position(path, len(doc.pages))
+                if saved is not None:
+                    self.session.go_to_position(*saved)
+                else:
+                    self.session.go_to_page(0)
                 p = self.session.current_page()
                 if p.image is not None:
                     self._pdf_view.set_page_image(p.image)
@@ -292,7 +298,11 @@ class MainWindow(QMainWindow):
         else:
             self._controls.set_epub_font_controls_visible(True)
             self._stack.setCurrentWidget(self._text_view)
-            self.session.go_to_page(0)
+            saved = load_reading_position(path, len(doc.pages))
+            if saved is not None:
+                self.session.go_to_position(*saved)
+            else:
+                self.session.go_to_page(0)
             p = self.session.current_page()
             text = p.raw_text or "\n\n".join(b.text for b in p.blocks)
             self._sync_text_reader_from_config()
@@ -481,9 +491,19 @@ class MainWindow(QMainWindow):
             self._pdf_view.set_show_overlays(False)
             self._pdf_view.set_block_overlays([], None)
 
+    def _save_reading_position(self) -> None:
+        if self.session is None:
+            return
+        doc = self.session.document
+        try:
+            save_reading_position(doc.path, self.session.page_index, self.session.block_index)
+        except Exception:
+            logger.exception("failed to save reading position for %s", doc.path)
+
     def closeEvent(self, e) -> None:  # noqa: ANN001
         self._poll.stop()
         if self.session:
+            self._save_reading_position()
             self.session.stop()
         if self._pdf is not None:
             try:

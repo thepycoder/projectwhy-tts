@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import tomli_w
-
 from PyQt6.QtWidgets import (
     QCheckBox,
     QHBoxLayout,
@@ -20,6 +18,7 @@ from PyQt6.QtWidgets import (
 )
 
 from projectwhy.config import AppConfig, SubstitutionRuleConfig
+from projectwhy.core.sidecar import save_sidecar_section
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +43,9 @@ def _load_sidecar_raw(doc_path: str) -> list[dict]:
 
 
 def _write_sidecar(doc_path: str, rules: list[SubstitutionRuleConfig]) -> None:
-    sidecar = Path(doc_path + ".projectwhy.toml")
-    data: dict = {"substitutions": {"rules": [
-        {"find": r.find, "replace": r.replace, "regex": r.regex} for r in rules
-    ]}}
-    with sidecar.open("wb") as f:
-        tomli_w.dump(data, f)
+    save_sidecar_section(doc_path, "substitutions", {
+        "rules": [{"find": r.find, "replace": r.replace, "regex": r.regex} for r in rules],
+    })
 
 
 class SubstitutionsSettingsPage:

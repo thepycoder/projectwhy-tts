@@ -331,6 +331,21 @@ class ReadingSession:
         self._ensure_neighbor_pages()
         return page
 
+    def go_to_position(self, page_index: int, block_index: int) -> Page:
+        """Navigate to *page_index* honoring *block_index* where possible.
+
+        Calls ``go_to_page`` first (which sets the cursor to the first speakable
+        block), then tries to advance to *block_index* if it is in range.  If
+        nothing speakable exists at or after *block_index* on the same page the
+        cursor stays at whatever ``go_to_page`` chose, so this always succeeds.
+        """
+        page = self.go_to_page(page_index)
+        if 0 <= block_index < len(page.blocks):
+            pos = self._find_speakable_at_or_after(page_index, block_index)
+            if pos is not None and pos[0] == page_index:
+                self._move_cursor(page_index, pos[1])
+        return page
+
     def next_page(self) -> Page:
         return self.go_to_page(min(self.page_index + 1, len(self.document.pages) - 1))
 
