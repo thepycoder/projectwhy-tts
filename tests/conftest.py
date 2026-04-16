@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+
+# Headless / CI-friendly Qt platform before any PyQt import via test modules.
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 

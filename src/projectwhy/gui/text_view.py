@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import html
+import re
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QResizeEvent, QShowEvent, QTextCharFormat, QTextCursor
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QTextBrowser, QWidget
+from PyQt6.QtGui import QColor, QFont, QResizeEvent, QShowEvent, QTextCharFormat, QTextCursor
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QTextBrowser, QTextEdit, QWidget
 
 from projectwhy.core.models import Block
 from projectwhy.core.plain_qt import normalize_plain_with_position_map, plain_text_like_qtextbrowser
@@ -16,6 +17,14 @@ THEME_PRESETS: dict[str, dict[str, str]] = {
     "sepia": {"bg": "#F5F0E8", "fg": "#5B4636", "quote": "#6B5646"},
     "dark": {"bg": "#1E1E1E", "fg": "#D4D4D4", "quote": "#AAAAAA"},
 }
+
+# QTextBrowser's CSS engine does not reliably honor ``font-size: inherit``; EPUBs often
+# set ``p.class { font-size: small }`` (keywords), which then ignore the body px size.
+# Force reader px / line-height / a screen-friendly stack on running text under .eread-root.
+_READER_BODY_FONT = (
+    'system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", '
+    "Arial, sans-serif"
+)
 
 
 class TextDocView(QWidget):
@@ -105,35 +114,72 @@ class TextDocView(QWidget):
 
     def _document_css(self) -> str:
         c = self._colors()
+        ff = _READER_BODY_FONT
+        fs = self._font_size
+        lh = self._line_height
         return f"""
             html {{
-              background-color: {c["bg"]};
+              background-color: {c["bg"]} !important;
               margin: 0;
               padding: 0;
+              font-family: {ff} !important;
+              font-size: {fs}px !important;
+              line-height: {lh} !important;
             }}
             body {{
               margin: 0;
               padding: 40px 28px 56px;
-              background-color: {c["bg"]};
-              color: {c["fg"]};
-              font-family: Georgia, 'Noto Serif', 'Times New Roman', serif;
-              font-size: {self._font_size}px;
-              line-height: {self._line_height};
+              background-color: {c["bg"]} !important;
+              color: {c["fg"]} !important;
+              font-family: {ff} !important;
+              font-size: {fs}px !important;
+              line-height: {lh} !important;
               max-width: {self._column_max_width}px;
               margin-left: auto;
               margin-right: auto;
             }}
+            body .eread-root p,
+            body .eread-root li,
+            body .eread-root td,
+            body .eread-root th,
+            body .eread-root div,
+            body .eread-root span,
+            body .eread-root em,
+            body .eread-root strong,
+            body .eread-root b,
+            body .eread-root i,
+            body .eread-root cite,
+            body .eread-root a,
+            body .eread-root small,
+            body .eread-root blockquote,
+            body .eread-root dd,
+            body .eread-root dt,
+            body .eread-root section,
+            body .eread-root article,
+            body .eread-root aside,
+            body .eread-root address {{
+              font-family: {ff} !important;
+              font-size: {fs}px !important;
+              line-height: {lh} !important;
+            }}
+            body .eread-root sub,
+            body .eread-root sup {{
+              font-family: {ff} !important;
+              font-size: 0.75em !important;
+            }}
             p {{ margin: 0.6em 0; }}
             h1, h2, h3, h4, h5, h6 {{
-              font-family: Georgia, 'Noto Serif', serif;
+              font-family: {ff} !important;
               line-height: 1.25;
               margin: 0.75em 0 0.4em;
             }}
-            h1 {{ font-size: 1.75em; }}
-            h2 {{ font-size: 1.45em; }}
-            h3 {{ font-size: 1.2em; }}
+            h1 {{ font-size: 1.75em !important; }}
+            h2 {{ font-size: 1.45em !important; }}
+            h3 {{ font-size: 1.2em !important; }}
             ul, ol {{ margin: 0.5em 0; padding-left: 1.4em; }}
             li {{ margin: 0.2em 0; }}
+            img {{ max-width: 100%; height: auto; display: block; margin: 0.5em auto; }}
+            figure {{ margin: 0.5em 0; }}
             blockquote {{
               margin: 0.8em 0;
               padding-left: 1em;
@@ -153,10 +199,29 @@ class TextDocView(QWidget):
         """
 
     def _full_html(self, body_inner: str) -> str:
+        """Build a complete HTML document, moving any <style> blocks from body_inner into <head>.
+
+        QTextBrowser only applies stylesheets declared in <head>; <style> elements
+        inside <body> are silently ignored.  EPUB CSS is embedded in the body fragment
+        by epub.py, so we hoist it here before ``setHtml``.
+
+        Hoisted EPUB styles come first; the app stylesheet is last so reader font size,
+        line height, and theme colors (via ``!important``) win over publisher rules.
+        """
         css = self._document_css()
+        extra_styles: list[str] = []
+
+        def _hoist(m: re.Match) -> str:
+            extra_styles.append(m.group(0))
+            return ""
+
+        clean_body = re.sub(
+            r"<style[^>]*>.*?</style>", _hoist, body_inner, flags=re.DOTALL | re.IGNORECASE
+        )
+        head_extra = "\n".join(extra_styles)
         return (
-            "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
-            f"<style>{css}</style></head><body>{body_inner}</body></html>"
+            '<!DOCTYPE html><html><head><meta charset="utf-8">'
+            f"{head_extra}<style>{css}</style></head><body>{clean_body}</body></html>"
         )
 
     def _apply_chrome(self) -> None:
@@ -175,9 +240,17 @@ class TextDocView(QWidget):
             esc = html.escape(self._raw_plain)
             inner = f'<div class="plainwrap">{esc}</div>'
             self._browser.setHtml(self._full_html(inner))
+        # QTextBrowser's CSS subset often leaves body text sized from QTextDocument.defaultFont()
+        # while some headline rules still apply from CSS. Sync default/widget font to reader size.
+        doc = self._browser.document()
+        base = QFont()
+        base.setStyleHint(QFont.StyleHint.SansSerif)
+        base.setPixelSize(max(1, int(self._font_size)))
+        doc.setDefaultFont(base)
+        self._browser.setFont(base)
         vw = self._browser.viewport().width()
         if vw > 0:
-            self._browser.document().setTextWidth(vw)
+            doc.setTextWidth(vw)
         self._recompute_block_starts()
 
     def _same_epub_page_content(
@@ -202,7 +275,7 @@ class TextDocView(QWidget):
         *,
         move_cursor_start: bool = True,
     ) -> None:
-        if self._blocks and self._same_epub_page_content(text, blocks, html_fragment):
+        if self._same_epub_page_content(text, blocks, html_fragment):
             self._blocks = list(blocks)
             return
         self._blocks = blocks
@@ -215,7 +288,7 @@ class TextDocView(QWidget):
     def _reload_document_preserve_scroll(self) -> None:
         sb = self._browser.verticalScrollBar()
         pos = sb.value() if sb else 0
-        if self._blocks:
+        if self._fragment_html is not None or self._raw_plain:
             self._render_document()
             if sb:
                 sb.setValue(min(pos, sb.maximum()))
@@ -256,6 +329,18 @@ class TextDocView(QWidget):
         target = int(doc_y - (viewport_h * ratio))
         sb.setValue(max(0, min(target, sb.maximum())))
 
+    def _set_highlight_extra(self, selection: QTextCursor) -> None:
+        """Draw highlight without touching document char formats.
+
+        Applying ``setCharFormat`` across the whole ``QTextDocument`` replaces
+        stylesheet-derived typography (and can break rich content).  Extra
+        selections paint on top and leave EPUB/CSS + images intact.
+        """
+        extra = QTextEdit.ExtraSelection()
+        extra.cursor = selection
+        extra.format = self._fmt
+        self._browser.setExtraSelections([extra])
+
     def highlight_word_in_block(
         self,
         block: Block | None,
@@ -264,15 +349,11 @@ class TextDocView(QWidget):
         block_index: int | None = None,
         scroll_into_view: bool = False,
     ) -> None:
-        cur = QTextCursor(self._browser.document())
-        cur.select(QTextCursor.SelectionType.Document)
-        cur.setCharFormat(QTextCharFormat())
-        cur.clearSelection()
-
         if block is None:
             if block_index is not None and 0 <= block_index < len(self._blocks):
                 block = self._blocks[block_index]
             else:
+                self._browser.setExtraSelections([])
                 return
 
         span: tuple[int, int] | None = None
@@ -295,6 +376,7 @@ class TextDocView(QWidget):
                         break
 
         if span is None:
+            self._browser.setExtraSelections([])
             return
 
         block_start, block_end = span
@@ -303,7 +385,7 @@ class TextDocView(QWidget):
         if word_index is None:
             hcur.setPosition(block_start)
             hcur.setPosition(block_end, QTextCursor.MoveMode.KeepAnchor)
-            hcur.mergeCharFormat(self._fmt)
+            self._set_highlight_extra(hcur)
             if scroll_into_view:
                 scroll_cur = QTextCursor(self._browser.document())
                 scroll_cur.setPosition(block_start)
@@ -311,11 +393,13 @@ class TextDocView(QWidget):
             return
 
         if word_index >= len(block.words):
+            self._browser.setExtraSelections([])
             return
 
         word = block.words[word_index]
         needle = word.text
         if not needle:
+            self._browser.setExtraSelections([])
             return
 
         plain = self._browser.toPlainText()
@@ -332,7 +416,7 @@ class TextDocView(QWidget):
 
         hcur.setPosition(found_at)
         hcur.setPosition(found_at + len(needle), QTextCursor.MoveMode.KeepAnchor)
-        hcur.mergeCharFormat(self._fmt)
+        self._set_highlight_extra(hcur)
         if scroll_into_view:
             scroll_cur = QTextCursor(self._browser.document())
             scroll_cur.setPosition(found_at)
