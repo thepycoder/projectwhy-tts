@@ -17,6 +17,7 @@ dependencies = [
     "PyQt6>=6.6",
     "ebooklib>=0.18",
     "beautifulsoup4>=4.12",
+    "spacy>=3.7",
     "huggingface-hub>=0.20",
     "ruff>=0.15.9",
     "tomli-w>=1.2.0",

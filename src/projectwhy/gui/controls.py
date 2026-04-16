@@ -25,6 +25,8 @@ class ControlBar(QWidget):
     next_block_clicked = pyqtSignal()
     voice_changed = pyqtSignal(str)
     speed_changed = pyqtSignal(float)
+    epub_font_smaller_clicked = pyqtSignal()
+    epub_font_larger_clicked = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -43,6 +45,12 @@ class ControlBar(QWidget):
         self.page_total_label = QLabel("of 0")
         self.btn_prev_block = QPushButton("Prev block")
         self.btn_next_block = QPushButton("Next block")
+        self.btn_font_minus = QPushButton("A−")
+        self.btn_font_minus.setToolTip("Smaller text (EPUB / plain text)")
+        self.btn_font_plus = QPushButton("A+")
+        self.btn_font_plus.setToolTip("Larger text (EPUB / plain text)")
+        self.btn_font_minus.setVisible(False)
+        self.btn_font_plus.setVisible(False)
         self.voice = QComboBox()
         self.speed = QComboBox()
         for sp in PLAYBACK_SPEED_CHOICES:
@@ -58,6 +66,8 @@ class ControlBar(QWidget):
         lay.addWidget(self.page_total_label)
         lay.addWidget(self.btn_prev_block)
         lay.addWidget(self.btn_next_block)
+        lay.addWidget(self.btn_font_minus)
+        lay.addWidget(self.btn_font_plus)
         lay.addWidget(QLabel("Voice"))
         lay.addWidget(self.voice, stretch=1)
         lay.addWidget(QLabel("Speed"))
@@ -71,6 +81,8 @@ class ControlBar(QWidget):
         self.page_edit.installEventFilter(self)
         self.btn_prev_block.clicked.connect(self.prev_block_clicked.emit)
         self.btn_next_block.clicked.connect(self.next_block_clicked.emit)
+        self.btn_font_minus.clicked.connect(self.epub_font_smaller_clicked.emit)
+        self.btn_font_plus.clicked.connect(self.epub_font_larger_clicked.emit)
         self.voice.currentIndexChanged.connect(self._emit_voice_changed)
         self.speed.currentIndexChanged.connect(self._on_speed_index)
 
@@ -136,6 +148,10 @@ class ControlBar(QWidget):
             if current and current in names:
                 self.voice.setCurrentText(current)
         self.voice.blockSignals(False)
+
+    def set_epub_font_controls_visible(self, visible: bool) -> None:
+        self.btn_font_minus.setVisible(visible)
+        self.btn_font_plus.setVisible(visible)
 
     def set_page_indicator(self, idx: int, total: int) -> None:
         self._page_index = idx

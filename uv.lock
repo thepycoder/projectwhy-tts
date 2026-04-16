@@ -2077,6 +2077,7 @@ dependencies = [
     { name = "pyrubberband" },
     { name = "ruff" },
     { name = "sounddevice" },
+    { name = "spacy" },
     { name = "tomli-w" },
 ]
 
@@ -2112,6 +2113,7 @@ requires-dist = [
     { name = "pyrubberband", specifier = ">=0.4.0" },
     { name = "ruff", specifier = ">=0.15.9" },
     { name = "sounddevice", specifier = ">=0.5" },
+    { name = "spacy", specifier = ">=3.7" },
     { name = "tomli-w", specifier = ">=1.2.0" },
 ]
 provides-extras = ["openai", "mistral"]

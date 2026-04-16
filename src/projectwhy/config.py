@@ -23,6 +23,27 @@ def normalize_highlight_granularity(raw: str) -> str:
     return "block" if v == "block" else "word"
 
 
+def normalize_epub_theme(raw: str) -> str:
+    """Return ``light``, ``sepia``, or ``dark`` (default ``light``)."""
+    v = (raw or "light").strip().lower()
+    if v in ("sepia", "dark"):
+        return v
+    return "light"
+
+
+def clamp_epub_font_size(n: int | float) -> int:
+    return max(12, min(28, int(n)))
+
+
+def clamp_epub_line_height(x: float) -> float:
+    return max(1.2, min(2.0, float(x)))
+
+
+def clamp_epub_column_max_width(n: int | float) -> int:
+    """Max width in pixels for the EPUB / plain-text reading column (body content)."""
+    return max(520, min(1400, int(n)))
+
+
 @dataclass
 class OpenAIConfig:
     api_key: str
@@ -64,6 +85,10 @@ class DisplayConfig:
     pdf_scale: float
     highlight_color: list[int]
     highlight_granularity: str
+    epub_theme: str
+    epub_font_size: int
+    epub_line_height: float
+    epub_column_max_width: int
 
 
 @dataclass
@@ -188,6 +213,10 @@ def _config_from_toml_dict(data: dict) -> AppConfig:
             pdf_scale=display["pdf_scale"],
             highlight_color=display["highlight_color"],
             highlight_granularity=normalize_highlight_granularity(str(display["highlight_granularity"])),
+            epub_theme=normalize_epub_theme(str(display["epub_theme"])),
+            epub_font_size=clamp_epub_font_size(display["epub_font_size"]),
+            epub_line_height=clamp_epub_line_height(float(display["epub_line_height"])),
+            epub_column_max_width=clamp_epub_column_max_width(display["epub_column_max_width"]),
         ),
         reading=ReadingConfig(
             tts_cache_max_entries=reading["tts_cache_max_entries"],

@@ -93,6 +93,8 @@ class Page:
     blocks: list[Block]
     image: Any = None  # PIL.Image.Image | None (avoid importing PIL at module level for typing only)
     raw_text: str | None = None
+    """Sanitized chapter HTML for EPUB display; None for PDF / plain-text pages."""
+    html: str | None = None
 
 
 @dataclass

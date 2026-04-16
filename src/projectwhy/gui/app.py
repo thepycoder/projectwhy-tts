@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import (
     QStackedWidget,
 )
 
-from projectwhy.config import AppConfig, SubstitutionRuleConfig, save
+from projectwhy.config import AppConfig, SubstitutionRuleConfig, clamp_epub_font_size, save
 from projectwhy.core.document import load_document
 from projectwhy.core.pdf import block_hit_at_page_point, word_hit_at_page_point
 from projectwhy.core.player import AudioPlayer
@@ -108,8 +108,10 @@ class MainWindow(QMainWindow):
         self._pdf_view = PDFView()
         self._pdf_view.setStatusTip("Click a word to start reading; drag to pan the page")
         self._pdf_view.set_hover_granularity(self.cfg.display.highlight_granularity)
+        self._pdf_view.set_highlight_color(self.cfg.display.highlight_color)
         self._pdf_view.word_clicked.connect(self._on_pdf_word_click)
         self._text_view = TextDocView()
+        self._sync_text_reader_from_config()
         self._stack.addWidget(self._pdf_view)
         self._stack.addWidget(self._text_view)
 
@@ -127,6 +129,8 @@ class MainWindow(QMainWindow):
         self._controls.next_block_clicked.connect(self._on_next_block)
         self._controls.voice_changed.connect(self._on_voice_changed)
         self._controls.speed_changed.connect(self._on_speed)
+        self._controls.epub_font_smaller_clicked.connect(self._on_epub_font_smaller)
+        self._controls.epub_font_larger_clicked.connect(self._on_epub_font_larger)
 
         self._poll = QTimer(self)
         self._poll.setInterval(33)
@@ -141,6 +145,24 @@ class MainWindow(QMainWindow):
 
         if initial_path:
             self.open_path(initial_path)
+
+    def _sync_text_reader_from_config(self) -> None:
+        d = self.cfg.display
+        self._text_view.set_highlight_color(d.highlight_color)
+        self._text_view.apply_reader_settings(
+            d.epub_theme,
+            d.epub_font_size,
+            d.epub_line_height,
+            d.epub_column_max_width,
+        )
+
+    def _on_epub_font_smaller(self) -> None:
+        self.cfg.display.epub_font_size = clamp_epub_font_size(self.cfg.display.epub_font_size - 1)
+        self._text_view.set_font_size(self.cfg.display.epub_font_size)
+
+    def _on_epub_font_larger(self) -> None:
+        self.cfg.display.epub_font_size = clamp_epub_font_size(self.cfg.display.epub_font_size + 1)
+        self._text_view.set_font_size(self.cfg.display.epub_font_size)
 
     def _inspector_speak_check(self, block: Block) -> bool:
         if self.session is not None:
@@ -199,6 +221,13 @@ class MainWindow(QMainWindow):
                 self.session.set_tts_engine(self.tts)
             self._apply_voice_combo(self.tts)
 
+        self._pdf_view.set_highlight_color(self.cfg.display.highlight_color)
+        self._sync_text_reader_from_config()
+        if self.session and self.session.document.doc_type != "pdf":
+            p = self.session.current_page()
+            t = p.raw_text or "\n\n".join(b.text for b in p.blocks)
+            self._text_view.set_document_text(t, p.blocks, p.html)
+
     def _menu_open(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -248,6 +277,7 @@ class MainWindow(QMainWindow):
         self._controls.set_page_indicator(0, total)
 
         if doc.doc_type == "pdf":
+            self._controls.set_epub_font_controls_visible(False)
             self._stack.setCurrentWidget(self._pdf_view)
             try:
                 self.session.go_to_page(0)
@@ -258,11 +288,13 @@ class MainWindow(QMainWindow):
                 logger.exception("page render")
                 QMessageBox.warning(self, "Page load", str(e))
         else:
+            self._controls.set_epub_font_controls_visible(True)
             self._stack.setCurrentWidget(self._text_view)
             self.session.go_to_page(0)
             p = self.session.current_page()
             text = p.raw_text or "\n\n".join(b.text for b in p.blocks)
-            self._text_view.set_document_text(text, p.blocks)
+            self._sync_text_reader_from_config()
+            self._text_view.set_document_text(text, p.blocks, p.html)
 
         self._poll.start()
         if doc.doc_type == "pdf":
@@ -376,7 +408,7 @@ class MainWindow(QMainWindow):
         else:
             p = self.session.current_page()
             text = p.raw_text or "\n\n".join(b.text for b in p.blocks)
-            self._text_view.set_document_text(text, p.blocks)
+            self._text_view.set_document_text(text, p.blocks, p.html)
 
         if self._inspector.isVisible():
             p = self.session.current_page()
@@ -400,6 +432,12 @@ class MainWindow(QMainWindow):
             if p.image is not None:
                 self._pdf_view.set_page_image(p.image)
 
+        if doc.doc_type != "pdf" and current_pi != self._last_poll_page:
+            self._last_poll_page = current_pi
+            p = self.session.current_page()
+            text = p.raw_text or "\n\n".join(b.text for b in p.blocks)
+            self._text_view.set_document_text(text, p.blocks, p.html)
+
         bbox = self.session.get_active_word_bbox()
         block = self.session.get_active_block()
         st = self.session.get_state()
@@ -410,9 +448,19 @@ class MainWindow(QMainWindow):
             self._pdf_view.set_highlight_bbox(bbox)
         else:
             if st.is_playing:
-                self._text_view.highlight_word_in_block(block, st.word_index)
+                self._text_view.highlight_word_in_block(
+                    block,
+                    st.word_index,
+                    block_index=st.block_index,
+                    scroll_into_view=True,
+                )
             else:
-                self._text_view.highlight_word_in_block(self.session.get_cursor_block(), None)
+                self._text_view.highlight_word_in_block(
+                    self.session.get_cursor_block(),
+                    None,
+                    block_index=st.block_index,
+                    scroll_into_view=False,
+                )
 
         if self._inspector.isVisible():
             page = self.session.current_page()

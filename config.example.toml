@@ -36,6 +36,12 @@ pdf_scale = 2.0
 highlight_color = [255, 200, 0, 128]
 # "word" = word highlight when TTS provides timestamps; "block" = always block-level (PDF hover + click too)
 highlight_granularity = "word"
+# EPUB / plain-text reader: "light", "sepia", or "dark"
+epub_theme = "light"
+epub_font_size = 17
+epub_line_height = 1.6
+# Max width in pixels of the text column (520–1400)
+epub_column_max_width = 1000
 
 # Playback: TTS audio cache size, speakable-block lookahead, and tempo (also in Settings…)
 [reading]

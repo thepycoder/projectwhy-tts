@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtWidgets import (
     QComboBox,
+    QDoubleSpinBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -11,12 +12,20 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSpinBox,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from projectwhy.config import AppConfig, normalize_highlight_granularity
+from projectwhy.config import (
+    AppConfig,
+    clamp_epub_column_max_width,
+    clamp_epub_font_size,
+    clamp_epub_line_height,
+    normalize_epub_theme,
+    normalize_highlight_granularity,
+)
 
 
 class VoiceSpeechSettingsPage:
@@ -104,6 +113,29 @@ class VoiceSpeechSettingsPage:
         self._highlight.addItem("Block-level (always)", "block")
         hf.addRow("Granularity:", self._highlight)
         outer.addWidget(highlight_box)
+
+        reader_box = QGroupBox("EPUB / plain text reader")
+        rf = QFormLayout(reader_box)
+        self._epub_theme = QComboBox()
+        self._epub_theme.addItem("Light", "light")
+        self._epub_theme.addItem("Sepia", "sepia")
+        self._epub_theme.addItem("Dark", "dark")
+        rf.addRow("Theme:", self._epub_theme)
+        self._epub_font_size = QSpinBox()
+        self._epub_font_size.setRange(12, 28)
+        self._epub_font_size.setSuffix(" px")
+        rf.addRow("Font size:", self._epub_font_size)
+        self._epub_line_height = QDoubleSpinBox()
+        self._epub_line_height.setRange(1.2, 2.0)
+        self._epub_line_height.setSingleStep(0.1)
+        self._epub_line_height.setDecimals(2)
+        rf.addRow("Line height:", self._epub_line_height)
+        self._epub_column_max_width = QSpinBox()
+        self._epub_column_max_width.setRange(520, 1400)
+        self._epub_column_max_width.setSingleStep(20)
+        self._epub_column_max_width.setSuffix(" px")
+        rf.addRow("Column max width:", self._epub_column_max_width)
+        outer.addWidget(reader_box)
         outer.addStretch(1)
 
     def _sync_engine_stack(self, _idx: int | None = None) -> None:
@@ -186,6 +218,12 @@ class VoiceSpeechSettingsPage:
         h_idx = self._highlight.findData(cfg.display.highlight_granularity)
         self._highlight.setCurrentIndex(max(0, h_idx))
 
+        t_idx = self._epub_theme.findData(cfg.display.epub_theme)
+        self._epub_theme.setCurrentIndex(max(0, t_idx))
+        self._epub_font_size.setValue(cfg.display.epub_font_size)
+        self._epub_line_height.setValue(cfg.display.epub_line_height)
+        self._epub_column_max_width.setValue(cfg.display.epub_column_max_width)
+
     def apply_to_config(self, cfg: AppConfig) -> str | None:
         eng = str(self._engine.currentData())
         if eng == "mistral" and not self._mistral_key.text().strip():
@@ -210,5 +248,11 @@ class VoiceSpeechSettingsPage:
 
         cfg.display.highlight_granularity = normalize_highlight_granularity(
             str(self._highlight.currentData())
+        )
+        cfg.display.epub_theme = normalize_epub_theme(str(self._epub_theme.currentData()))
+        cfg.display.epub_font_size = clamp_epub_font_size(self._epub_font_size.value())
+        cfg.display.epub_line_height = clamp_epub_line_height(self._epub_line_height.value())
+        cfg.display.epub_column_max_width = clamp_epub_column_max_width(
+            self._epub_column_max_width.value()
         )
         return None
