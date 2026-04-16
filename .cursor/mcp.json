@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "projectwhy": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "/home/victor/Projects/projectwhy-tts",
+        "projectwhy-mcp"
+      ]
+    }
+  }
+}

@@ -23,7 +23,8 @@ dependencies = [
     "tomli-w>=1.2.0",
     "pyrubberband>=0.4.0",
     "mistralai>=1.5.0",
-    "openai>=1.0"
+    "openai>=1.0",
+    "mcp>=1.8",
 ]
 
 [dependency-groups]
@@ -38,6 +39,7 @@ markers = [
 
 [project.scripts]
 projectwhy = "projectwhy.__main__:main"
+projectwhy-mcp = "projectwhy.mcp_controller:main"
 
 [build-system]
 requires = ["hatchling>=1.24"]
