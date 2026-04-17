@@ -335,19 +335,19 @@ async def prev_block() -> dict[str, Any]:
 
 
 @mcp.tool()
-async def play_from_pdf_word(page_index: int, block_index: int, word_index: int) -> dict[str, Any]:
-    """Start reading from a specific word on a PDF page (0-based indices). No-op if not a PDF."""
+async def play_from_word(page_index: int, block_index: int, word_index: int) -> dict[str, Any]:
+    """Start reading from a specific word (0-based page, block, word indices). PDF, EPUB, or plain."""
     return await _maybe_forward(
-        "play_from_pdf_word",
+        "play_from_word",
         {"page_index": page_index, "block_index": block_index, "word_index": word_index},
     )
 
 
 @mcp.tool()
-async def play_from_pdf_block(page_index: int, block_index: int) -> dict[str, Any]:
-    """Start reading from the start of a layout block on a PDF page. No-op if not a PDF."""
+async def play_from_block(page_index: int, block_index: int) -> dict[str, Any]:
+    """Start reading from the start of a layout block (0-based indices). PDF, EPUB, or plain."""
     return await _maybe_forward(
-        "play_from_pdf_block",
+        "play_from_block",
         {"page_index": page_index, "block_index": block_index},
     )
 

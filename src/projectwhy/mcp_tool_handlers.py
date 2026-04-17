@@ -182,13 +182,11 @@ def handle_prev_block(ctx: McpQtContext) -> dict[str, Any]:
     return {"ok": True, "block_index": w.session.block_index}
 
 
-def handle_play_from_pdf_word(ctx: McpQtContext, params: dict[str, Any]) -> dict[str, Any]:
+def handle_play_from_word(ctx: McpQtContext, params: dict[str, Any]) -> dict[str, Any]:
     w = ctx.window
     if w.session is None:
         return {"ok": False, "error": "no_document"}
-    if w.session.document.doc_type != "pdf":
-        return {"ok": False, "error": "not a PDF document"}
-    ok = w.session.play_from_pdf_word(
+    ok = w.session.play_from_word(
         int(params["page_index"]),
         int(params["block_index"]),
         int(params["word_index"]),
@@ -197,13 +195,11 @@ def handle_play_from_pdf_word(ctx: McpQtContext, params: dict[str, Any]) -> dict
     return {"ok": bool(ok)}
 
 
-def handle_play_from_pdf_block(ctx: McpQtContext, params: dict[str, Any]) -> dict[str, Any]:
+def handle_play_from_block(ctx: McpQtContext, params: dict[str, Any]) -> dict[str, Any]:
     w = ctx.window
     if w.session is None:
         return {"ok": False, "error": "no_document"}
-    if w.session.document.doc_type != "pdf":
-        return {"ok": False, "error": "not a PDF document"}
-    ok = w.session.play_from_pdf_block(int(params["page_index"]), int(params["block_index"]))
+    ok = w.session.play_from_block(int(params["page_index"]), int(params["block_index"]))
     w._refresh_page_view()
     return {"ok": bool(ok)}
 
@@ -303,10 +299,10 @@ def dispatch_tool(ctx: McpQtContext, method: str, params: dict[str, Any]) -> Any
         return handle_next_block(ctx)
     if method == "prev_block":
         return handle_prev_block(ctx)
-    if method == "play_from_pdf_word":
-        return handle_play_from_pdf_word(ctx, params)
-    if method == "play_from_pdf_block":
-        return handle_play_from_pdf_block(ctx, params)
+    if method == "play_from_word":
+        return handle_play_from_word(ctx, params)
+    if method == "play_from_block":
+        return handle_play_from_block(ctx, params)
     if method == "list_page_blocks":
         return handle_list_page_blocks(ctx, params)
     if method == "list_voices":

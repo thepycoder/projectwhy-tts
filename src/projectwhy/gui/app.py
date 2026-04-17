@@ -114,6 +114,8 @@ class MainWindow(QMainWindow):
         self._pdf_view.set_highlight_color(self.cfg.display.highlight_color)
         self._pdf_view.word_clicked.connect(self._on_pdf_word_click)
         self._text_view = TextDocView()
+        self._text_view.setStatusTip("Click a word to start reading")
+        self._text_view.seek_clicked.connect(self._on_text_seek_clicked)
         self._sync_text_reader_from_config()
         self._stack.addWidget(self._pdf_view)
         self._stack.addWidget(self._text_view)
@@ -152,6 +154,7 @@ class MainWindow(QMainWindow):
     def _sync_text_reader_from_config(self) -> None:
         d = self.cfg.display
         self._text_view.set_highlight_color(d.highlight_color)
+        self._text_view.set_hover_granularity(d.highlight_granularity)
         self._text_view.apply_reader_settings(
             d.epub_theme,
             d.epub_font_size,
@@ -230,6 +233,7 @@ class MainWindow(QMainWindow):
             self.session.set_substitution_rules(global_rules + sidecar_rules)
             self.session.set_highlight_granularity(self.cfg.display.highlight_granularity)
         self._pdf_view.set_hover_granularity(self.cfg.display.highlight_granularity)
+        self._text_view.set_hover_granularity(self.cfg.display.highlight_granularity)
         self._controls.set_playback_speed(self.cfg.reading.playback_speed)
 
         if _tts_config_fingerprint(self.cfg) != tts_fp_before:
@@ -327,6 +331,8 @@ class MainWindow(QMainWindow):
         self._audiobook_action.setEnabled(doc.doc_type == "epub")
         if doc.doc_type == "pdf":
             self._pdf_view.set_hover_granularity(self.cfg.display.highlight_granularity)
+        else:
+            self._text_view.set_hover_granularity(self.cfg.display.highlight_granularity)
 
     def _apply_voice_combo(self, tts: TTSEngine) -> None:
         names = tts.get_voices()
@@ -352,13 +358,22 @@ class MainWindow(QMainWindow):
             bi = block_hit_at_page_point(p, x, y)
             if bi is None:
                 return
-            self.session.play_from_pdf_block(self.session.page_index, bi)
+            self.session.play_from_block(self.session.page_index, bi)
             return
         hit = word_hit_at_page_point(p, x, y)
         if hit is None:
             return
         bi, wi = hit
-        self.session.play_from_pdf_word(self.session.page_index, bi, wi)
+        self.session.play_from_word(self.session.page_index, bi, wi)
+
+    def _on_text_seek_clicked(self, block_index: int, word_index: object) -> None:
+        if not self.session or self.session.document.doc_type == "pdf":
+            return
+        if word_index is None:
+            self.session.play_from_block(self.session.page_index, block_index)
+        else:
+            self.session.play_from_word(self.session.page_index, block_index, int(word_index))
+        self._refresh_page_view()
 
     def _on_play(self) -> None:
         if self.session:

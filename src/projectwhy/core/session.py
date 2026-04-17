@@ -256,10 +256,8 @@ class ReadingSession:
         self.player.stop()
         self._utterance_done.set()
 
-    def play_from_pdf_word(self, page_index: int, block_index: int, word_index: int) -> bool:
-        """Move to the given block and start playback at *word_index* (PDF only; Ctrl+click in the GUI)."""
-        if self.document.doc_type != "pdf":
-            return False
+    def play_from_word(self, page_index: int, block_index: int, word_index: int) -> bool:
+        """Move to the given block and start playback at *word_index* (GUI click or MCP)."""
         page = self._ensure_page(page_index)
         if block_index >= len(page.blocks):
             return False
@@ -288,10 +286,8 @@ class ReadingSession:
             self.play()
         return True
 
-    def play_from_pdf_block(self, page_index: int, block_index: int) -> bool:
-        """Move to the given block and start playback from the start of the utterance (PDF only)."""
-        if self.document.doc_type != "pdf":
-            return False
+    def play_from_block(self, page_index: int, block_index: int) -> bool:
+        """Move to the given block and start playback from the start of the utterance."""
         page = self._ensure_page(page_index)
         if block_index >= len(page.blocks):
             return False

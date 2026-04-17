@@ -5,10 +5,11 @@ from __future__ import annotations
 import html
 import re
 
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QFont, QResizeEvent, QShowEvent, QTextCharFormat, QTextCursor
-from PyQt6.QtWidgets import QFrame, QHBoxLayout, QTextBrowser, QTextEdit, QWidget
+from PyQt6.QtCore import QEvent, QObject, QPoint, QPointF, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QMouseEvent, QResizeEvent, QShowEvent, QTextCharFormat, QTextCursor
+from PyQt6.QtWidgets import QApplication, QFrame, QHBoxLayout, QTextBrowser, QTextEdit, QWidget
 
+from projectwhy.config import normalize_highlight_granularity
 from projectwhy.core.models import Block
 from projectwhy.core.plain_qt import normalize_plain_with_position_map, plain_text_like_qtextbrowser
 
@@ -30,6 +31,8 @@ _READER_BODY_FONT = (
 class TextDocView(QWidget):
     """Centered reading column with theme + HTML or plain text."""
 
+    seek_clicked = pyqtSignal(int, object)  # block_index, word_index (int) or None for block start
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._theme = "light"
@@ -40,8 +43,15 @@ class TextDocView(QWidget):
         self._raw_plain = ""
         self._fragment_html: str | None = None
         self._block_spans: list[tuple[int, int]] = []
+        self._word_spans: list[list[tuple[int, int]]] = []
         self._fmt = QTextCharFormat()
         self._fmt.setBackground(QColor(255, 200, 0, 120))
+        self._hover_fmt = QTextCharFormat()
+        self._hover_fmt.setBackground(QColor(100, 160, 255, 90))
+        self._hover_granularity = "word"
+        self._playback_cursor: QTextCursor | None = None
+        self._hover_cursor: QTextCursor | None = None
+        self._left_press_viewport: QPointF | None = None
 
         outer = QHBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -53,6 +63,10 @@ class TextDocView(QWidget):
         outer.addWidget(self._browser, 0)
         outer.addStretch(1)
 
+        vp = self._browser.viewport()
+        vp.setMouseTracking(True)
+        vp.installEventFilter(self)
+
     def resizeEvent(self, event: QResizeEvent | None) -> None:
         super().resizeEvent(event)
         self._sync_browser_geometry()
@@ -63,6 +77,10 @@ class TextDocView(QWidget):
 
     def set_highlight_color(self, rgba: list[int] | tuple[int, int, int, int]) -> None:
         self._fmt.setBackground(QColor(*rgba))
+
+    def set_hover_granularity(self, mode: str) -> None:
+        self._hover_granularity = normalize_highlight_granularity(mode)
+        self._clear_hover_visual()
 
     def set_theme(self, theme: str) -> None:
         t = theme.strip().lower()
@@ -316,6 +334,132 @@ class TextDocView(QWidget):
             search_pos = idx + len(norm_needle)
         if len(self._block_spans) != len(self._blocks):
             self._block_spans = []
+        self._recompute_word_spans()
+
+    def _recompute_word_spans(self) -> None:
+        self._word_spans = []
+        if not self._block_spans or len(self._block_spans) != len(self._blocks):
+            return
+        plain = self._browser.toPlainText()
+        for bi, b in enumerate(self._blocks):
+            block_start, block_end = self._block_spans[bi]
+            region = plain[block_start:block_end]
+            spans: list[tuple[int, int]] = []
+            search_from = 0
+            for w in b.words:
+                needle = w.text
+                if not needle:
+                    self._word_spans = []
+                    return
+                found = region.find(needle, search_from)
+                if found < 0:
+                    self._word_spans = []
+                    return
+                abs_start = block_start + found
+                abs_end = abs_start + len(needle)
+                spans.append((abs_start, abs_end))
+                search_from = found + len(needle)
+            if len(spans) != len(b.words):
+                self._word_spans = []
+                return
+            self._word_spans.append(spans)
+
+    def _char_index_to_hit(self, pos: int) -> tuple[int, int] | tuple[int, None] | None:
+        if not self._block_spans or len(self._block_spans) != len(self._blocks):
+            return None
+        for bi, (bs, be) in enumerate(self._block_spans):
+            if bs <= pos < be:
+                if self._hover_granularity == "block":
+                    return (bi, None)
+                if (
+                    not self._word_spans
+                    or len(self._word_spans) != len(self._blocks)
+                    or bi >= len(self._word_spans)
+                ):
+                    return None
+                wsp = self._word_spans[bi]
+                for wi, (ws, we) in enumerate(wsp):
+                    if ws <= pos < we:
+                        return (bi, wi)
+                return None
+        return None
+
+    def _sync_extra_selections(self) -> None:
+        extras: list[QTextEdit.ExtraSelection] = []
+        if self._hover_cursor is not None and self._hover_cursor.hasSelection():
+            h = QTextEdit.ExtraSelection()
+            h.cursor = self._hover_cursor
+            h.format = self._hover_fmt
+            extras.append(h)
+        if self._playback_cursor is not None and self._playback_cursor.hasSelection():
+            p = QTextEdit.ExtraSelection()
+            p.cursor = self._playback_cursor
+            p.format = self._fmt
+            extras.append(p)
+        self._browser.setExtraSelections(extras)
+
+    def _clear_hover_visual(self) -> None:
+        self._hover_cursor = None
+        self._sync_extra_selections()
+
+    def _update_hover_at_viewport(self, viewport_pos: QPoint) -> None:
+        if self._left_press_viewport is not None:
+            return
+        cur = self._browser.cursorForPosition(viewport_pos)
+        pos = cur.position()
+        hit = self._char_index_to_hit(pos)
+        if hit is None:
+            self._clear_hover_visual()
+            self._browser.unsetCursor()
+            return
+        bi, wi = hit
+        hcur = QTextCursor(self._browser.document())
+        if wi is None:
+            bs, be = self._block_spans[bi]
+            hcur.setPosition(bs)
+            hcur.setPosition(be, QTextCursor.MoveMode.KeepAnchor)
+        else:
+            ws, we = self._word_spans[bi][wi]
+            hcur.setPosition(ws)
+            hcur.setPosition(we, QTextCursor.MoveMode.KeepAnchor)
+        self._hover_cursor = hcur
+        self._sync_extra_selections()
+        self._browser.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def eventFilter(self, obj: QObject | None, event: QEvent | None) -> bool:
+        if obj is self._browser.viewport() and event is not None:
+            et = event.type()
+            if et == QEvent.Type.MouseMove:
+                me = event
+                if isinstance(me, QMouseEvent) and me.buttons() == Qt.MouseButton.NoButton:
+                    self._update_hover_at_viewport(me.position().toPoint())
+                return False
+            if et == QEvent.Type.Leave:
+                self._clear_hover_visual()
+                self._browser.unsetCursor()
+                return False
+            if et == QEvent.Type.MouseButtonPress and isinstance(event, QMouseEvent):
+                if event.button() == Qt.MouseButton.LeftButton:
+                    self._left_press_viewport = QPointF(event.position())
+                    self._clear_hover_visual()
+                return False
+            if et == QEvent.Type.MouseButtonRelease and isinstance(event, QMouseEvent):
+                if event.button() == Qt.MouseButton.LeftButton and self._left_press_viewport is not None:
+                    dist = (QPointF(event.position()) - self._left_press_viewport).manhattanLength()
+                    drag = QApplication.startDragDistance()
+                    self._left_press_viewport = None
+                    if dist < drag:
+                        pos = event.position()
+                        if self._browser.anchorAt(pos.toPoint()):
+                            return False
+                        cur = self._browser.cursorForPosition(pos.toPoint())
+                        hit = self._char_index_to_hit(cur.position())
+                        if hit is not None:
+                            bi, wi = hit
+                            self.seek_clicked.emit(bi, wi)
+                    self._update_hover_at_viewport(event.position().toPoint())
+                return False
+        return super().eventFilter(obj, event)
 
     def _scroll_cursor_to_viewport_ratio(self, cursor: QTextCursor, ratio_from_top: float) -> None:
         """Scroll so *cursor* sits near ``ratio_from_top`` of the viewport height."""
@@ -329,18 +473,6 @@ class TextDocView(QWidget):
         target = int(doc_y - (viewport_h * ratio))
         sb.setValue(max(0, min(target, sb.maximum())))
 
-    def _set_highlight_extra(self, selection: QTextCursor) -> None:
-        """Draw highlight without touching document char formats.
-
-        Applying ``setCharFormat`` across the whole ``QTextDocument`` replaces
-        stylesheet-derived typography (and can break rich content).  Extra
-        selections paint on top and leave EPUB/CSS + images intact.
-        """
-        extra = QTextEdit.ExtraSelection()
-        extra.cursor = selection
-        extra.format = self._fmt
-        self._browser.setExtraSelections([extra])
-
     def highlight_word_in_block(
         self,
         block: Block | None,
@@ -353,10 +485,12 @@ class TextDocView(QWidget):
             if block_index is not None and 0 <= block_index < len(self._blocks):
                 block = self._blocks[block_index]
             else:
-                self._browser.setExtraSelections([])
+                self._playback_cursor = None
+                self._sync_extra_selections()
                 return
 
         span: tuple[int, int] | None = None
+        resolved_bi: int | None = block_index
         if (
             block_index is not None
             and self._block_spans
@@ -368,15 +502,18 @@ class TextDocView(QWidget):
             for i, b in enumerate(self._blocks):
                 if b is block:
                     span = self._block_spans[i]
+                    resolved_bi = i
                     break
             if span is None:
                 for i, b in enumerate(self._blocks):
                     if b.text == block.text:
                         span = self._block_spans[i]
+                        resolved_bi = i
                         break
 
         if span is None:
-            self._browser.setExtraSelections([])
+            self._playback_cursor = None
+            self._sync_extra_selections()
             return
 
         block_start, block_end = span
@@ -385,7 +522,8 @@ class TextDocView(QWidget):
         if word_index is None:
             hcur.setPosition(block_start)
             hcur.setPosition(block_end, QTextCursor.MoveMode.KeepAnchor)
-            self._set_highlight_extra(hcur)
+            self._playback_cursor = hcur
+            self._sync_extra_selections()
             if scroll_into_view:
                 scroll_cur = QTextCursor(self._browser.document())
                 scroll_cur.setPosition(block_start)
@@ -393,30 +531,47 @@ class TextDocView(QWidget):
             return
 
         if word_index >= len(block.words):
-            self._browser.setExtraSelections([])
+            self._playback_cursor = None
+            self._sync_extra_selections()
             return
 
         word = block.words[word_index]
         needle = word.text
         if not needle:
-            self._browser.setExtraSelections([])
+            self._playback_cursor = None
+            self._sync_extra_selections()
             return
 
-        plain = self._browser.toPlainText()
-        region = plain[block_start:block_end]
-        search_from = 0
-        for j in range(word_index):
-            wp = region.find(block.words[j].text, search_from)
-            if wp >= 0:
-                search_from = wp + len(block.words[j].text)
-        found_in_region = region.find(needle, search_from)
-        if found_in_region < 0:
-            found_in_region = search_from
-        found_at = block_start + found_in_region
+        found_at: int | None = None
+        found_len = len(needle)
+        if (
+            resolved_bi is not None
+            and self._word_spans
+            and len(self._word_spans) == len(self._blocks)
+            and resolved_bi < len(self._word_spans)
+            and word_index < len(self._word_spans[resolved_bi])
+        ):
+            ws, we = self._word_spans[resolved_bi][word_index]
+            found_at = ws
+            found_len = we - ws
+
+        if found_at is None:
+            plain = self._browser.toPlainText()
+            region = plain[block_start:block_end]
+            search_from = 0
+            for j in range(word_index):
+                wp = region.find(block.words[j].text, search_from)
+                if wp >= 0:
+                    search_from = wp + len(block.words[j].text)
+            found_in_region = region.find(needle, search_from)
+            if found_in_region < 0:
+                found_in_region = search_from
+            found_at = block_start + found_in_region
 
         hcur.setPosition(found_at)
-        hcur.setPosition(found_at + len(needle), QTextCursor.MoveMode.KeepAnchor)
-        self._set_highlight_extra(hcur)
+        hcur.setPosition(found_at + found_len, QTextCursor.MoveMode.KeepAnchor)
+        self._playback_cursor = hcur
+        self._sync_extra_selections()
         if scroll_into_view:
             scroll_cur = QTextCursor(self._browser.document())
             scroll_cur.setPosition(found_at)

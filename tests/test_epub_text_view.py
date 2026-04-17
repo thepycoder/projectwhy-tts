@@ -10,6 +10,8 @@ from ebooklib import epub
 from projectwhy.core.epub import load_epub_document
 from projectwhy.gui.text_view import TextDocView
 
+RESOURCES_DIR = Path(__file__).resolve().parent / "resources"
+
 
 def _write_eleven_chapter_epub(path: Path) -> None:
     """Spine-only EPUB: ``pages[10]`` is the last chapter with a unique marker (no nav in spine)."""
@@ -83,3 +85,85 @@ def test_epub_text_view_page_ten_font_pixels_and_highlight(qtbot, eleven_chapter
     assert len(extras) == 1
     sel = extras[0].cursor.selectedText()
     assert sel, "word highlight should select non-empty text"
+
+
+def test_epub_option_b_word_spans_match_plain(qtbot, eleven_chapter_epub_path: Path) -> None:
+    doc = load_epub_document(str(eleven_chapter_epub_path))
+    p10 = doc.pages[10]
+    view = TextDocView()
+    qtbot.addWidget(view)
+    view.resize(900, 700)
+    view.show()
+    qtbot.waitExposed(view)
+    view.set_document_text(p10.raw_text or "", p10.blocks, p10.html)
+
+    assert view._word_spans
+    assert len(view._word_spans) == len(p10.blocks)
+    plain = view._browser.toPlainText()
+    for bi, block in enumerate(p10.blocks):
+        assert len(view._word_spans[bi]) == len(block.words)
+        for wi, w in enumerate(block.words):
+            start, end = view._word_spans[bi][wi]
+            assert plain[start:end] == w.text
+
+
+def test_epub_char_index_to_hit_word_mode(qtbot, eleven_chapter_epub_path: Path) -> None:
+    doc = load_epub_document(str(eleven_chapter_epub_path))
+    p10 = doc.pages[10]
+    view = TextDocView()
+    qtbot.addWidget(view)
+    view.resize(900, 700)
+    view.show()
+    qtbot.waitExposed(view)
+    view.set_hover_granularity("word")
+    view.set_document_text(p10.raw_text or "", p10.blocks, p10.html)
+
+    plain = view._browser.toPlainText()
+    needle = "UNIQUE_PAGE_TEN_MARKER"
+    idx = plain.find(needle)
+    assert idx >= 0
+    mid = idx + len(needle) // 2
+    hit = view._char_index_to_hit(mid)
+    assert hit is not None
+    bi, wi = hit
+    assert bi == 0
+    assert p10.blocks[0].words[wi].text == needle
+
+
+def test_epub_char_index_to_hit_block_mode(qtbot, eleven_chapter_epub_path: Path) -> None:
+    doc = load_epub_document(str(eleven_chapter_epub_path))
+    p10 = doc.pages[10]
+    view = TextDocView()
+    qtbot.addWidget(view)
+    view.resize(900, 700)
+    view.show()
+    qtbot.waitExposed(view)
+    view.set_hover_granularity("block")
+    view.set_document_text(p10.raw_text or "", p10.blocks, p10.html)
+
+    plain = view._browser.toPlainText()
+    idx = plain.find("emphasis")
+    assert idx >= 0
+    hit = view._char_index_to_hit(idx)
+    assert hit == (0, None)
+
+
+def test_pg389_fixture_word_spans_when_aligned(qtbot) -> None:
+    path = RESOURCES_DIR / "pg389-images-3.epub"
+    if not path.is_file():
+        pytest.skip(f"missing fixture {path}")
+    doc = load_epub_document(str(path))
+    p0 = doc.pages[0]
+    view = TextDocView()
+    qtbot.addWidget(view)
+    view.resize(900, 700)
+    view.show()
+    qtbot.waitExposed(view)
+    view.set_document_text(p0.raw_text or "", p0.blocks, p0.html)
+    if not view._block_spans or not view._word_spans:
+        pytest.skip("page 0 block/plain alignment not available for this build")
+    plain = view._browser.toPlainText()
+    for bi, block in enumerate(p0.blocks):
+        for wi, w in enumerate(block.words):
+            start, end = view._word_spans[bi][wi]
+            assert plain[start:end] == w.text
