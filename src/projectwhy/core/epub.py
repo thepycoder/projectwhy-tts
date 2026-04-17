@@ -364,6 +364,53 @@ def _wrap_reader_html(inner: str, epub_css: str = "") -> str:
     return f'{css_block}<div class="eread-root">{inner}</div>'
 
 
+def _epub_author(book: epub.EpubBook) -> str | None:
+    creators = book.get_metadata("DC", "creator")
+    if not creators:
+        return None
+    val, _meta = creators[0]
+    s = str(val).strip()
+    return s or None
+
+
+def _epub_cover_bytes(book: epub.EpubBook) -> tuple[bytes | None, str | None]:
+    """Return (bytes, mime) for the best-effort cover image, or (None, None)."""
+    for item in book.get_items():
+        if isinstance(item, epub.EpubCover):
+            data = item.get_content()
+            if data:
+                mt = getattr(item, "media_type", None) or "image/jpeg"
+                return bytes(data), str(mt).lower()
+    for item in book.get_items():
+        props = getattr(item, "properties", None) or []
+        if isinstance(props, str):
+            props = props.split()
+        if "cover-image" in props:
+            mt = (getattr(item, "media_type", None) or "").lower()
+            if mt.startswith("image/"):
+                data = item.get_content()
+                if data:
+                    return bytes(data), mt
+    try:
+        opf_meta = book.get_metadata("OPF", "meta")
+    except KeyError:
+        opf_meta = []
+    for _val, attrs in opf_meta:
+        if not attrs or attrs.get("name") != "cover":
+            continue
+        cid = attrs.get("content")
+        if not cid:
+            continue
+        citem = book.get_item_with_id(str(cid))
+        if citem is None:
+            continue
+        data = citem.get_content()
+        if data:
+            mt = getattr(citem, "media_type", None) or "image/jpeg"
+            return bytes(data), str(mt).lower()
+    return None, None
+
+
 def _spine_document_items(book: epub.EpubBook):
     """Yield (EpubItem) in spine order; skip non-linear and non-(X)HTML."""
     for spine_entry in book.spine:
@@ -387,6 +434,8 @@ def load_epub_document(path: str) -> Document:
     book = epub.read_epub(path)
     title = book.get_metadata("DC", "title")
     name = title[0][0] if title else path
+    author = _epub_author(book)
+    cover_bytes, cover_mime = _epub_cover_bytes(book)
 
     # Collect all CSS from the manifest once.  Many EPUBs (including this one)
     # declare a shared stylesheet in the OPF manifest but never reference it
@@ -433,9 +482,22 @@ def load_epub_document(path: str) -> Document:
         )
         joined = "\n\n".join(b.text for b in blocks)
         pages.append(
-            Page(index=idx, blocks=blocks, image=None, raw_text=joined, html=_wrap_reader_html(inner, epub_css)),
+            Page(
+                index=idx,
+                blocks=blocks,
+                image=None,
+                raw_text=joined,
+                html=_wrap_reader_html(inner, epub_css),
+                spine_href=item.file_name,
+            ),
         )
         idx += 1
     if not pages:
-        pages.append(Page(index=0, blocks=[], image=None, raw_text="", html=None))
-    return Document(path=path, doc_type="epub", pages=pages, metadata={"title": name})
+        pages.append(Page(index=0, blocks=[], image=None, raw_text="", html=None, spine_href=None))
+    meta = {
+        "title": name,
+        "author": author,
+        "cover_bytes": cover_bytes,
+        "cover_mime": cover_mime,
+    }
+    return Document(path=path, doc_type="epub", pages=pages, metadata=meta)

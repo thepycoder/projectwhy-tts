@@ -13,3 +13,4 @@
 - [x] Add custom API options for TTS (OpenAI, Mistral)
 - [x] Line break chars in pdf.py and layout.py hardcoded. Should be user settings
 - [ ] **EPUB / QTextBrowser text mapping:** Option A is in `core/plain_qt.py`. For post-layout indexing, core offsets, instrumented HTML, and EPUB word-hover alignment with PDF, see `docs/epub-plain-text-mapping-future-work.md` (options B–D).
+- [x] Produce full audiobooks

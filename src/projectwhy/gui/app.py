@@ -27,6 +27,7 @@ from projectwhy.gui.controls import ControlBar
 from projectwhy.gui.inspector.dock import InspectorDock
 from projectwhy.gui.settings import SettingsDialog
 from projectwhy.gui.pdf_view import PDFView
+from projectwhy.gui.audiobook_dialog import AudiobookDialog
 from projectwhy.gui.text_view import TextDocView
 
 logger = logging.getLogger(__name__)
@@ -180,6 +181,9 @@ class MainWindow(QMainWindow):
         m = self.menuBar().addMenu("File")
         a_open = m.addAction("Open…")
         a_open.triggered.connect(self._menu_open)
+        self._audiobook_action = m.addAction("Generate audiobook…")
+        self._audiobook_action.triggered.connect(self._menu_audiobook)
+        self._audiobook_action.setEnabled(False)
         a_settings = m.addAction("Settings…")
         a_settings.triggered.connect(self._menu_settings)
 
@@ -188,6 +192,17 @@ class MainWindow(QMainWindow):
         self._inspector_action.setCheckable(True)
         self._inspector_action.toggled.connect(self._inspector.setVisible)
         self._inspector.visibilityChanged.connect(self._inspector_action.setChecked)
+
+    def _menu_audiobook(self) -> None:
+        if not self.session or self.session.document.doc_type != "epub":
+            QMessageBox.information(
+                self,
+                "Audiobook",
+                "Open an EPUB document to generate an audiobook.",
+            )
+            return
+        dlg = AudiobookDialog(self.cfg, self.session, self.tts, self)
+        dlg.exec()
 
     def _menu_settings(self) -> None:
         doc_path = self.session.document.path if self.session else None
@@ -309,6 +324,7 @@ class MainWindow(QMainWindow):
             self._text_view.set_document_text(text, p.blocks, p.html)
 
         self._poll.start()
+        self._audiobook_action.setEnabled(doc.doc_type == "epub")
         if doc.doc_type == "pdf":
             self._pdf_view.set_hover_granularity(self.cfg.display.highlight_granularity)
 

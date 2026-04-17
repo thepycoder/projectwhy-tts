@@ -95,6 +95,8 @@ class Page:
     raw_text: str | None = None
     """Sanitized chapter HTML for EPUB display; None for PDF / plain-text pages."""
     html: str | None = None
+    """EPUB spine item path (OPF-relative); used for audiobook chapter title fallback."""
+    spine_href: str | None = None
 
 
 @dataclass
