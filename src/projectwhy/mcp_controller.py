@@ -383,6 +383,12 @@ async def set_playback_speed(speed: float) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def set_inspector_visible(visible: bool = True) -> dict[str, Any]:
+    """Show or hide the Inspector dock (Layout, Detail, and Pipeline tabs)."""
+    return await _maybe_forward("set_inspector_visible", {"visible": visible})
+
+
+@mcp.tool()
 async def screenshot(output_path: str | None = None) -> dict[str, Any]:
     """Save a PNG of the main window; returns the absolute path. Default: temp file under /tmp."""
     params: dict[str, Any] = {}

@@ -250,6 +250,16 @@ def handle_set_playback_speed(ctx: McpQtContext, params: dict[str, Any]) -> dict
     return {"ok": True, "speed": float(w.cfg.reading.playback_speed)}
 
 
+def handle_set_inspector_visible(ctx: McpQtContext, params: dict[str, Any]) -> dict[str, Any]:
+    w = ctx.window
+    visible = bool(params.get("visible", True))
+    w._inspector.setVisible(visible)
+    if visible and w.width() < 1300:
+        w.resize(1300, max(w.height(), 880))
+    w._refresh_page_view()
+    return {"ok": True, "visible": visible}
+
+
 def handle_screenshot(ctx: McpQtContext, params: dict[str, Any]) -> dict[str, Any]:
     w = ctx.window
     output_path = params.get("output_path")
@@ -311,6 +321,8 @@ def dispatch_tool(ctx: McpQtContext, method: str, params: dict[str, Any]) -> Any
         return handle_set_voice(ctx, params)
     if method == "set_playback_speed":
         return handle_set_playback_speed(ctx, params)
+    if method == "set_inspector_visible":
+        return handle_set_inspector_visible(ctx, params)
     if method == "screenshot":
         return handle_screenshot(ctx, params)
     if method == "quit_app":
