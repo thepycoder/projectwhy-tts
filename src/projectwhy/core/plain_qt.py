@@ -14,6 +14,9 @@ def plain_text_like_qtextbrowser(raw: str) -> str:
     text = re.sub(r"\s+", " ", raw).strip()
     text = re.sub(r"\(\s+", "(", text)
     text = re.sub(r"\s+\)", ")", text)
+    # QTextDocument drops a space immediately after opening typographic quotes in
+    # toPlainText(), while BeautifulSoup get_text() often keeps “ word → “ word.
+    text = re.sub(r"([\u2018\u201c\u00ab])\s+", r"\1", text)
     return text
 
 
